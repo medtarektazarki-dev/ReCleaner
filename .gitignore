@@ -1,0 +1,16 @@
+node_modules/
+.node_modules.lock
+.vercel/
+desktop/build/
+artifacts/
+screenshots/
+.grok/
+attachments/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo
+dist/
+coverage/

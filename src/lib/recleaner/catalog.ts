@@ -1,0 +1,185 @@
+import type { SectionId, Tool } from "./types";
+import { APP_PACKAGES, OPENERS } from "./plans";
+
+export const NAV: { id: SectionId; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "optimize", label: "Optimize" },
+  { id: "disk", label: "Disk" },
+  { id: "repair", label: "Repair" },
+  { id: "security", label: "Security" },
+  { id: "advanced", label: "Advanced" },
+  { id: "drivers", label: "Drivers" },
+  { id: "apps", label: "Apps" },
+  { id: "maintenance", label: "Maintenance" },
+  { id: "accounts", label: "Accounts" },
+  { id: "tweaks", label: "Tweaks" },
+  { id: "licensing", label: "Licensing" },
+  { id: "activity", label: "Activity" },
+  { id: "settings", label: "Settings" },
+];
+
+export const SECTION_COPY: Partial<Record<SectionId, string>> = {
+  optimize: "Image health, system files, and temporary files. Repairs run only after a check.",
+  disk: "Health, optimization, and free-space tools. Wiping free space is destructive.",
+  repair: "Services and shell repairs. Each one does only the job in its description.",
+  security: "Defender, firewall, hosts, and telemetry. Offline scan restarts the PC.",
+  advanced: "Power, startup, DNS, and changes that are easy to regret.",
+  drivers: "Windows Update can offer drivers. GPU drivers still belong to their own apps.",
+  apps: "Install and update through Windows Package Manager. Nothing is bundled inside REcleaner.",
+  maintenance: "Opens the matching Windows tool. REcleaner does not reimplement it.",
+  accounts: "Local accounts only. You cannot remove the account you are using.",
+  tweaks: "Individual changes. Applying all of them is a large, reversible set.",
+  licensing: "Uses your own key or a public setup key for an edition change. Nothing here is an activator.",
+};
+
+const CORE: Tool[] = [
+  { id: "dism", section: "optimize", title: "Image health", summary: "Checks the component store. RestoreHealth runs only if Windows reports the image as repairable.", risk: "moderate", restorePoint: true, confirm: "Run an image health check? Repair starts only if the image is repairable.", actionId: "dism-smart" },
+  { id: "component", section: "optimize", title: "Component cleanup", summary: "Starts component-store cleanup to recover space from superseded updates.", risk: "low", actionId: "component-cleanup" },
+  { id: "old-updates", section: "optimize", title: "Reset update base", summary: "Deep-cleans the component store and removes Windows.old. Installed updates cannot be uninstalled afterward.", risk: "high", acknowledge: true, confirm: "Reset the update base and remove Windows.old if it exists?", actionId: "clean-updates" },
+  { id: "dumps", section: "optimize", title: "Crash dumps", summary: "Deletes memory dumps and CBS cabinet logs.", risk: "low", actionId: "clean-dumps" },
+  { id: "sfc", section: "optimize", title: "System files", summary: "Verifies protected files. Repair runs only when violations are reported.", risk: "moderate", restorePoint: true, confirm: "Check system files? Repair starts only if verification finds violations.", actionId: "sfc-smart" },
+  { id: "temp", section: "optimize", title: "Temporary files", summary: "Clears temp folders and prefetch. Windows.old is left alone.", risk: "low", actionId: "clean-temp" },
+  { id: "net", section: "optimize", title: "Reset network", summary: "Flushes DNS, renews the address, and resets Winsock. The connection will drop.", risk: "moderate", confirm: "Reset the network stack? You may lose connectivity for a moment.", actionId: "internet-reset" },
+  { id: "events", section: "optimize", title: "Event logs", summary: "Clears every Windows event log this account can clear.", risk: "moderate", confirm: "Clear event logs? Troubleshooting history will be removed.", actionId: "clean-events" },
+  { id: "delivery", section: "optimize", title: "Delivery cache", summary: "Deletes Delivery Optimization files.", risk: "low", actionId: "clean-delivery" },
+  { id: "gpu", section: "optimize", title: "GPU shader cache", summary: "Clears NVIDIA, AMD, and DirectX shader caches. The next launch of a game may stutter once.", risk: "low", actionId: "clear-gpu" },
+  { id: "ram", section: "optimize", title: "Memory report", summary: "Reports free physical memory. REcleaner does not download third-party memory tools.", risk: "safe", actionId: "ram-note" },
+  { id: "quick", section: "optimize", title: "Quick repair", summary: "Image check, system file check, then temporary cleanup. Later steps run only on Windows, and repairs run only when a check asks for them.", risk: "moderate", restorePoint: true, confirm: "Start quick repair? Cleanup runs only after the checks.", actionId: "host-read", suite: "quick" },
+
+  { id: "chkdsk", section: "disk", title: "Schedule disk check", summary: "Runs CHKDSK /f /r. The system drive is scheduled for the next restart.", risk: "moderate", confirm: "Schedule or start a disk check on the selected drive?", actionId: "chkdsk" },
+  { id: "chkdsk-cancel", section: "disk", title: "Cancel scheduled check", summary: "Excludes a drive from the next automatic check.", risk: "low", actionId: "chkdsk-cancel" },
+  { id: "defrag", section: "disk", title: "Optimize drive", summary: "Defragments a hard disk or TRIMs a solid-state drive, whichever Windows detects.", risk: "low", actionId: "defrag" },
+  { id: "smart", section: "disk", title: "Disk health", summary: "Reads S.M.A.R.T. health for physical disks. Read only.", risk: "safe", actionId: "smart-health" },
+  { id: "volumes", section: "disk", title: "Storage", summary: "Lists volumes with capacity and free space. Read only.", risk: "safe", actionId: "disk-info" },
+  { id: "wipe", section: "disk", title: "Wipe free space", summary: "Overwrites free space so deleted files are harder to recover. Files you can still see are not deleted. This can take hours.", risk: "high", acknowledge: true, confirm: "Overwrite free space on the selected drive?", actionId: "secure-wipe" },
+  { id: "speed", section: "disk", title: "Disk speed", summary: "Runs the Windows disk assessment for one drive.", risk: "low", actionId: "disk-speed" },
+  { id: "usb", section: "disk", title: "Unhide files", summary: "Clears hidden, system, and read-only attributes on a drive.", risk: "moderate", confirm: "Clear hidden attributes on every file of this drive?", actionId: "usb-rescue" },
+  { id: "write", section: "disk", title: "Write protection", summary: "Clears the Windows write-protect policy and the disk readonly flag. A damaged drive can still refuse writes.", risk: "moderate", confirm: "Clear write protection for this drive?", actionId: "write-protect" },
+
+  { id: "update-repair", section: "repair", title: "Repair Windows Update", summary: "Stops update services, deletes the download cache, and starts the services again.", risk: "moderate", restorePoint: true, confirm: "Reset the Windows Update cache?", actionId: "winupdate-repair" },
+  { id: "store", section: "repair", title: "Repair Store apps", summary: "Resets the Store cache and re-registers installed packages.", risk: "moderate", confirm: "Re-register Store packages? This can take several minutes.", actionId: "store-repair" },
+  { id: "icons", section: "repair", title: "Icons and thumbnails", summary: "Restarts Explorer and rebuilds icon and thumbnail caches.", risk: "low", actionId: "icons-rebuild" },
+  { id: "taskbar", section: "repair", title: "Taskbar and search", summary: "Restarts Explorer and re-registers the shell experience package.", risk: "low", actionId: "taskbar-repair" },
+  { id: "audio", section: "repair", title: "Audio", summary: "Restarts Windows Audio and the endpoint builder.", risk: "low", actionId: "fix-audio" },
+  { id: "bluetooth", section: "repair", title: "Bluetooth", summary: "Restarts the Bluetooth support service.", risk: "low", actionId: "fix-bluetooth" },
+  { id: "printer", section: "repair", title: "Print queue", summary: "Stops the spooler, deletes stuck jobs, and starts it again.", risk: "low", actionId: "fix-printer" },
+  { id: "core-services", section: "repair", title: "Core services", summary: "Restarts Update, BITS, and Cryptographic Services.", risk: "low", actionId: "restart-core" },
+  { id: "services", section: "repair", title: "Service check", summary: "Reads important services. It does not start, stop, or change them.", risk: "safe", actionId: "services-diagnostic" },
+
+  { id: "qscan", section: "security", title: "Quick scan", summary: "Windows Defender quick scan.", risk: "safe", actionId: "quick-scan" },
+  { id: "fscan", section: "security", title: "Full scan", summary: "Windows Defender full scan. It can take a long time and will be stopped if it exceeds the time limit.", risk: "safe", actionId: "full-scan" },
+  { id: "oscan", section: "security", title: "Offline scan", summary: "Starts a Defender offline scan. Windows will restart.", risk: "high", acknowledge: true, confirm: "Restart now for an offline malware scan?", actionId: "offline-scan" },
+  { id: "dhist", section: "security", title: "Protection history", summary: "Clears Defender detection history.", risk: "low", actionId: "defender-history" },
+  { id: "drepair", section: "security", title: "Repair Defender", summary: "Removes policy locks, starts the service, and updates signatures.", risk: "moderate", confirm: "Repair Windows Defender services?", actionId: "defender-repair" },
+  { id: "fwreset", section: "security", title: "Reset firewall", summary: "Restores default firewall rules. Custom rules are removed.", risk: "high", acknowledge: true, confirm: "Reset the firewall to defaults?", actionId: "firewall-reset" },
+  { id: "hosts", section: "security", title: "Reset hosts file", summary: "Backs up the hosts file and writes the default localhost entries.", risk: "moderate", confirm: "Replace the hosts file with the Windows default?", actionId: "hosts-reset" },
+  { id: "tel-off", section: "security", title: "Disable telemetry", summary: "Sets the telemetry policy to off and stops Connected User Experiences.", risk: "moderate", confirm: "Disable telemetry?", actionId: "telemetry-off" },
+  { id: "tel-on", section: "security", title: "Enable telemetry", summary: "Restores the telemetry policy and the diagnostic service.", risk: "low", actionId: "telemetry-on" },
+
+  { id: "perf", section: "advanced", title: "Ultimate performance", summary: "Creates the Ultimate Performance power scheme and makes it active.", risk: "low", actionId: "ultimate-perf" },
+  { id: "balanced", section: "advanced", title: "Balanced power", summary: "Returns to Balanced and deletes schemes REcleaner created.", risk: "low", actionId: "balanced" },
+  { id: "shutdown", section: "advanced", title: "Schedule shutdown", summary: "Shuts the PC down after the number of minutes you enter.", risk: "moderate", confirm: "Schedule a shutdown?", actionId: "shutdown-schedule" },
+  { id: "noshutdown", section: "advanced", title: "Cancel shutdown", summary: "Cancels a shutdown that is waiting.", risk: "safe", actionId: "shutdown-cancel" },
+  { id: "bios", section: "advanced", title: "Restart to firmware", summary: "Restarts into UEFI in five seconds, if the firmware allows it.", risk: "high", acknowledge: true, confirm: "Restart to firmware setup?", actionId: "bios-restart" },
+  { id: "safe", section: "advanced", title: "Safe mode", summary: "Sets a minimal safe boot and restarts. You will need Normal boot later to leave it.", risk: "high", acknowledge: true, confirm: "Restart into Safe Mode?", actionId: "safe-mode" },
+  { id: "normal", section: "advanced", title: "Normal boot", summary: "Clears the safe-boot flag and restarts.", risk: "moderate", confirm: "Restart into normal Windows?", actionId: "normal-mode" },
+  { id: "debloat", section: "advanced", title: "Remove inbox apps", summary: "Removes Bing, Xbox, Solitaire, Skype, and Zune packages for this user.", risk: "moderate", confirm: "Remove those inbox apps?", actionId: "debloat" },
+  { id: "wifi", section: "advanced", title: "Wi-Fi passwords", summary: "Shows saved wireless keys on this PC.", risk: "moderate", confirm: "Show saved Wi-Fi passwords?", actionId: "wifi-passwords" },
+  { id: "wu-off", section: "advanced", title: "Disable Windows Update", summary: "Stops and disables update services. The PC will not receive security updates until you turn this back on.", risk: "high", acknowledge: true, confirm: "Disable Windows Update?", actionId: "disable-updates" },
+  { id: "wu-on", section: "advanced", title: "Enable Windows Update", summary: "Restores update services.", risk: "low", actionId: "enable-updates" },
+  { id: "dns1", section: "advanced", title: "Cloudflare DNS", summary: "Sets active adapters to 1.1.1.1 and 1.0.0.1.", risk: "low", actionId: "dns-cloudflare" },
+  { id: "dns2", section: "advanced", title: "Google DNS", summary: "Sets active adapters to 8.8.8.8 and 8.8.4.4.", risk: "low", actionId: "dns-google" },
+  { id: "dns3", section: "advanced", title: "Quad9 DNS", summary: "Sets active adapters to 9.9.9.9 and 149.112.112.112.", risk: "low", actionId: "dns-quad9" },
+  { id: "dns4", section: "advanced", title: "AdGuard DNS", summary: "Sets active adapters to AdGuard DNS.", risk: "low", actionId: "dns-adguard" },
+  { id: "dns5", section: "advanced", title: "Automatic DNS", summary: "Returns adapters to DHCP DNS.", risk: "low", actionId: "dns-default" },
+  { id: "games", section: "advanced", title: "Game caches", summary: "Clears Discord, Steam, Epic, EA, and DirectX caches. Games and chat stay installed.", risk: "low", actionId: "gamer-cache" },
+  { id: "oem", section: "advanced", title: "OEM product key", summary: "Reads the firmware OEM key, if the manufacturer stored one.", risk: "safe", actionId: "oem-key" },
+  { id: "own-on", section: "advanced", title: "Add Take Ownership", summary: "Adds a right-click command that takes ownership of a file or folder.", risk: "moderate", confirm: "Add Take Ownership to the context menu?", actionId: "takeown-add" },
+  { id: "own-off", section: "advanced", title: "Remove Take Ownership", summary: "Removes the Take Ownership command.", risk: "low", actionId: "takeown-remove" },
+  { id: "bsod", section: "advanced", title: "Crash records", summary: "Reads recent bugcheck events. Read only.", risk: "safe", actionId: "bsod" },
+  { id: "backup", section: "advanced", title: "System image", summary: "Backs up the system drive to another drive with wbadmin. The destination cannot be C:.", risk: "high", acknowledge: true, confirm: "Start a full system image backup? It can take a long time.", actionId: "system-backup" },
+  { id: "block", section: "advanced", title: "Block a program", summary: "Adds inbound and outbound firewall blocks for one .exe.", risk: "high", acknowledge: true, confirm: "Block this program in the firewall?", actionId: "fw-block" },
+  { id: "unblock", section: "advanced", title: "Unblock a program", summary: "Removes the REcleaner firewall block for that program.", risk: "moderate", confirm: "Remove the firewall block?", actionId: "fw-unblock" },
+
+  { id: "drv-scan", section: "drivers", title: "Check driver updates", summary: "Asks Windows Update for driver packages. It does not install them.", risk: "safe", actionId: "driver-scan" },
+  { id: "drv-list", section: "drivers", title: "List third-party drivers", summary: "Prints pnputil's driver list so you can copy a published name.", risk: "safe", actionId: "driver-list" },
+  { id: "drv-backup", section: "drivers", title: "Backup drivers", summary: "Exports installed drivers to Drivers_Backup on the drive you choose.", risk: "low", actionId: "driver-backup" },
+  { id: "drv-restore", section: "drivers", title: "Restore drivers", summary: "Installs drivers from Drivers_Backup on the selected drive.", risk: "moderate", confirm: "Install drivers from that backup?", actionId: "driver-restore" },
+  { id: "drv-del", section: "drivers", title: "Remove a driver", summary: "Uninstalls one third-party driver package by its oemXX.inf name.", risk: "high", acknowledge: true, confirm: "Remove this driver package?", actionId: "driver-delete" },
+
+  { id: "up-list", section: "apps", title: "Check for updates", summary: "Lists winget upgrades. Nothing is installed.", risk: "safe", actionId: "winget-upgrade" },
+  { id: "up-all", section: "apps", title: "Update all", summary: "Installs every winget upgrade it can.", risk: "moderate", confirm: "Update all packages winget can see?", actionId: "winget-upgrade-all" },
+  { id: "up-one", section: "apps", title: "Update one app", summary: "Updates a single package id.", risk: "low", actionId: "winget-upgrade-one" },
+  { id: "un-one", section: "apps", title: "Uninstall an app", summary: "Silently uninstalls a package id, including a purge when winget supports it.", risk: "high", acknowledge: true, confirm: "Uninstall this package?", actionId: "winget-uninstall" },
+  { id: "search-app", section: "apps", title: "Search winget", summary: "Searches the winget source. Use a package id or a single word.", risk: "safe", actionId: "winget-search" },
+  { id: "runtimes", section: "apps", title: "Core runtimes", summary: "Installs Visual C++, .NET Desktop 8, WebView2, and DirectX via winget.", risk: "moderate", confirm: "Install the core runtimes?", actionId: "install-runtimes" },
+  { id: "export-apps", section: "apps", title: "Export app list", summary: "Saves apps.json under REcleaner on the selected drive.", risk: "safe", actionId: "winget-export" },
+  { id: "import-apps", section: "apps", title: "Import app list", summary: "Installs packages from REcleaner\\apps.json on the selected drive.", risk: "moderate", confirm: "Install apps from that backup list?", actionId: "winget-import" },
+
+  { id: "add-user", section: "accounts", title: "Create account", summary: "Creates a local user. Leave the password empty for none.", risk: "moderate", confirm: "Create this local account?", actionId: "user-add" },
+  { id: "del-user", section: "accounts", title: "Delete account", summary: "Deletes a local user. This does not delete that person's files in every case, and it cannot delete you.", risk: "high", acknowledge: true, confirm: "Delete this account?", actionId: "user-delete" },
+  { id: "ren-user", section: "accounts", title: "Rename account", summary: "Renames a local user.", risk: "moderate", confirm: "Rename this account?", actionId: "user-rename" },
+  { id: "pass-user", section: "accounts", title: "Change password", summary: "Sets a new password. An empty password clears it.", risk: "high", acknowledge: true, confirm: "Change this password?", actionId: "user-password" },
+  { id: "grant", section: "accounts", title: "Make administrator", summary: "Adds the user to the local Administrators group.", risk: "high", acknowledge: true, confirm: "Grant administrator rights?", actionId: "user-grant" },
+  { id: "revoke", section: "accounts", title: "Make standard user", summary: "Removes the user from Administrators.", risk: "moderate", confirm: "Remove administrator rights?", actionId: "user-revoke" },
+  { id: "hide", section: "accounts", title: "Hide from sign-in", summary: "Hides the account on the sign-in screen. The name can still be typed.", risk: "moderate", confirm: "Hide this account?", actionId: "user-hide" },
+  { id: "show", section: "accounts", title: "Show on sign-in", summary: "Returns a hidden account to the sign-in screen.", risk: "low", actionId: "user-show" },
+  { id: "disable-user", section: "accounts", title: "Disable account", summary: "Prevents the account from signing in.", risk: "high", acknowledge: true, confirm: "Disable this account?", actionId: "user-disable" },
+  { id: "enable-user", section: "accounts", title: "Enable account", summary: "Allows the account to sign in again.", risk: "low", actionId: "user-enable" },
+  { id: "admin-on", section: "accounts", title: "Enable built-in administrator", summary: "Enables the built-in administrator account for this language.", risk: "high", acknowledge: true, confirm: "Enable the built-in administrator?", actionId: "builtin-admin-on" },
+  { id: "admin-off", section: "accounts", title: "Disable built-in administrator", summary: "Disables the built-in administrator account.", risk: "moderate", confirm: "Disable the built-in administrator?", actionId: "builtin-admin-off" },
+  { id: "info-user", section: "accounts", title: "Account details", summary: "Shows net user details. Read only.", risk: "safe", actionId: "user-info" },
+
+  { id: "tw-delay", section: "tweaks", title: "Snappier menus", summary: "Sets menu show delay to 10 ms.", risk: "low", actionId: "tweak-delay" },
+  { id: "tw-menu", section: "tweaks", title: "Classic right-click", summary: "Restores the compact context menu on Windows 11 and restarts Explorer.", risk: "low", actionId: "tweak-menu" },
+  { id: "tw-lock", section: "tweaks", title: "No lock screen", summary: "Boots to the sign-in prompt without the lock screen.", risk: "low", actionId: "tweak-lock" },
+  { id: "tw-visual", section: "tweaks", title: "Fewer visual effects", summary: "Sets visual effects to best performance.", risk: "low", actionId: "tweak-visual" },
+  { id: "tw-sticky", section: "tweaks", title: "Sticky keys off", summary: "Stops the sticky-keys and filter-keys prompts.", risk: "low", actionId: "tweak-sticky" },
+  { id: "tw-net", section: "tweaks", title: "Network throttling", summary: "Raises the multimedia network throttle. This is a gaming tweak, not a magic ping fix.", risk: "moderate", confirm: "Change the multimedia network profile?", actionId: "tweak-network" },
+  { id: "tw-bing", section: "tweaks", title: "No Bing in search", summary: "Turns off web suggestions in Start search.", risk: "low", actionId: "tweak-bing" },
+  { id: "tw-sys", section: "tweaks", title: "Disable SysMain", summary: "Stops the SysMain service. Some PCs start slower afterward.", risk: "moderate", confirm: "Disable SysMain?", actionId: "tweak-sysmain" },
+  { id: "tw-dvr", section: "tweaks", title: "Game DVR off", summary: "Disables Game DVR background capture.", risk: "low", actionId: "tweak-dvr" },
+  { id: "tw-mouse", section: "tweaks", title: "No mouse acceleration", summary: "Turns off enhance pointer precision.", risk: "low", actionId: "tweak-mouse" },
+  { id: "tw-hib", section: "tweaks", title: "Hibernation off", summary: "Turns off hibernation and removes hiberfil.sys.", risk: "moderate", confirm: "Disable hibernation?", actionId: "tweak-hibernate" },
+  { id: "tw-vbs", section: "tweaks", title: "Memory integrity off", summary: "Disables hypervisor-enforced code integrity. This lowers a Windows 11 security control.", risk: "high", acknowledge: true, confirm: "Disable memory integrity?", actionId: "tweak-vbs" },
+  { id: "tw-p2p", section: "tweaks", title: "No peer updates", summary: "Stops Delivery Optimization from sharing updates.", risk: "low", actionId: "tweak-p2p" },
+  { id: "tw-all", section: "tweaks", title: "Apply all tweaks", summary: "Applies every tweak in this list, including memory integrity and hibernation.", risk: "high", acknowledge: true, restorePoint: true, confirm: "Apply every tweak?", actionId: "tweak-all" },
+  { id: "tw-undo", section: "tweaks", title: "Restore defaults", summary: "Returns the tweaks above to common Windows defaults and restarts Explorer.", risk: "moderate", confirm: "Restore the default tweak values?", actionId: "tweak-restore" },
+
+  { id: "win-status", section: "licensing", title: "Windows license", summary: "Shows the current license details. Read only.", risk: "safe", actionId: "win-status" },
+  { id: "win-act", section: "licensing", title: "Activate Windows", summary: "Installs a product key you supply and attempts activation. A rejected key is a failure, not a success.", risk: "moderate", confirm: "Install this product key and try to activate Windows?", actionId: "win-activate" },
+  { id: "win-ed", section: "licensing", title: "Change edition", summary: "Lists target editions, then applies a public setup key only if Windows reports that edition as a target.", risk: "high", acknowledge: true, confirm: "Attempt this edition change?", actionId: "win-edition" },
+  { id: "win-key", section: "licensing", title: "Remove Windows key", summary: "Uninstalls the installed product key locally. A digital license may still activate Windows.", risk: "high", acknowledge: true, confirm: "Remove the installed Windows product key?", actionId: "win-remove-key" },
+  { id: "off-status", section: "licensing", title: "Office license", summary: "Runs OSPP status when Office includes that script. Microsoft 365 sign-in is not changed.", risk: "safe", actionId: "office-status" },
+  { id: "off-act", section: "licensing", title: "Activate Office volume key", summary: "Installs a volume-license key with OSPP. Subscription activation is not handled here.", risk: "moderate", confirm: "Install this Office key and try to activate?", actionId: "office-activate" },
+  { id: "off-key", section: "licensing", title: "Remove Office keys", summary: "Removes Office keys that OSPP can see. It does not revoke a license from Microsoft.", risk: "high", acknowledge: true, confirm: "Remove detected Office product keys?", actionId: "office-remove-key" },
+  { id: "off-un", section: "licensing", title: "Uninstall Office", summary: "If Click-to-Run Office is installed, downloads the deployment tool and removes those products. Documents are not the target.", risk: "high", acknowledge: true, confirm: "Uninstall Click-to-Run Office?", actionId: "office-uninstall" },
+];
+
+const APP_TOOLS: Tool[] = APP_PACKAGES.map((app) => ({
+  id: app.id,
+  section: "apps" as const,
+  title: app.title,
+  summary: `Installs ${app.pkg} with winget.`,
+  risk: "low" as const,
+  actionId: app.id,
+}));
+
+const OPEN_TOOLS: Tool[] = OPENERS.map(([id, title]) => ({
+  id,
+  section: "maintenance" as const,
+  title,
+  summary: `Opens ${title}.`,
+  risk: "safe" as const,
+  actionId: id,
+}));
+
+export const TOOLS: Tool[] = [...CORE, ...APP_TOOLS, ...OPEN_TOOLS];
+
+export function toolsIn(section: SectionId): Tool[] {
+  return TOOLS.filter((tool) => tool.section === section);
+}
+
+export function findTool(id: string): Tool | undefined {
+  return TOOLS.find((tool) => tool.id === id);
+}
