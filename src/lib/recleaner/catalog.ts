@@ -84,7 +84,7 @@ const CORE: Tool[] = [
   { id: "safe", section: "advanced", title: "Safe mode", summary: "Sets a minimal safe boot and restarts. You will need Normal boot later to leave it.", risk: "high", acknowledge: true, confirm: "Restart into Safe Mode?", actionId: "safe-mode" },
   { id: "normal", section: "advanced", title: "Normal boot", summary: "Clears the safe-boot flag and restarts.", risk: "moderate", confirm: "Restart into normal Windows?", actionId: "normal-mode" },
   { id: "debloat", section: "advanced", title: "Remove inbox apps", summary: "Removes Bing, Xbox, Solitaire, Skype, and Zune packages for this user.", risk: "moderate", confirm: "Remove those inbox apps?", actionId: "debloat" },
-  { id: "wifi", section: "advanced", title: "Wi-Fi passwords", summary: "Shows saved wireless keys on this PC.", risk: "moderate", confirm: "Show saved Wi-Fi passwords?", actionId: "wifi-passwords" },
+  { id: "wifi", section: "advanced", title: "Wi-Fi networks", summary: "Lists saved wireless network names. Passwords are not read.", risk: "safe", actionId: "wifi-passwords" },
   { id: "wu-off", section: "advanced", title: "Disable Windows Update", summary: "Stops and disables update services. The PC will not receive security updates until you turn this back on.", risk: "high", acknowledge: true, confirm: "Disable Windows Update?", actionId: "disable-updates" },
   { id: "wu-on", section: "advanced", title: "Enable Windows Update", summary: "Restores update services.", risk: "low", actionId: "enable-updates" },
   { id: "dns1", section: "advanced", title: "Cloudflare DNS", summary: "Sets active adapters to 1.1.1.1 and 1.0.0.1.", risk: "low", actionId: "dns-cloudflare" },

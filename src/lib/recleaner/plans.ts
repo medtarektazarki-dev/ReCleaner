@@ -361,10 +361,10 @@ sequential("debloat", "Remove provisioned apps", [
   ),
 ], { timeoutMs: 180000 });
 
-sequential("wifi-passwords", "Saved Wi-Fi passwords", [
+sequential("wifi-passwords", "Saved Wi-Fi networks", [
   ps(
-    "List WLAN profiles",
-    "netsh wlan show profiles | Select-String 'All User Profile' | ForEach-Object { $n = ($_ -split ':',2)[1].Trim(); $k = netsh wlan show profile name=\"$n\" key=clear | Select-String 'Key Content'; $p = if ($k) { ($k -split ':',2)[1].Trim() } else { '' }; '{0}  {1}' -f $n, $p }",
+    "List WLAN profile names",
+    "netsh wlan show profiles | Select-String 'All User Profile' | ForEach-Object { ($_ -split ':',2)[1].Trim() }",
   ),
 ], { timeoutMs: 60000 });
 
