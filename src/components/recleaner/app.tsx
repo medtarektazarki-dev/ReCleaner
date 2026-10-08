@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
@@ -41,7 +41,9 @@ import { SystemCore } from "./core";
 import { Mark, Wordmark } from "./mark";
 import { isDesktop } from "@/lib/recleaner/desktop";
 import { FullScanScreen, type ScanRow } from "./full-scan";
-import { SCAN_STEPS, findingFromResult, healthScore, repairChoices, verifySteps, type Finding, type RepairChoice } from "@/lib/recleaner/health";
+import { SCAN_STEPS, findingFromResult, healthScore, recommendRestore, repairChoices, verifySteps, type Finding, type RepairChoice } from "@/lib/recleaner/health";
+import { buildScanReport } from "@/lib/recleaner/scan/report";
+import { statusLabel } from "@/lib/recleaner/scan/score";
 
 const ICONS: Record<SectionId, typeof Activity> = {
   overview: Activity,
@@ -78,7 +80,7 @@ type Flow =
   | { kind: "restore"; tool: Tool; params: Record<string, string> }
   | { kind: "params"; tool: Tool; params: Record<string, string>; error?: string }
   | { kind: "details"; result: ServerResult; tool: string }
-  | { kind: "repairs"; choices: RepairChoice[] }
+  | { kind: "repairs"; choices: RepairChoice[]; restore: boolean }
   | { kind: "close" };
 
 function tone(state: string): string {
@@ -129,7 +131,10 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
   const [scanState, setScanState] = useState<RunState>("ready");
   const [scanRows, setScanRows] = useState<ScanRow[]>([]);
   const [findings, setFindings] = useState<Finding[] | null>(null);
-  const [pendingRepairs, setPendingRepairs] = useState<RepairChoice[]>([]);
+  const [scanNote, setScanNote] = useState<string | null>(null);
+  const [scanStarted, setScanStarted] = useState<number | null>(null);
+  const [beforeScore, setBeforeScore] = useState<number | null>(null);
+  const cancelScan = useRef(false);
 
   useEffect(() => {
     hydrate();
@@ -233,16 +238,42 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
 
   async function fullScan() {
     if (busy) return;
+    cancelScan.current = false;
+    setScanNote(null);
+    const started = new Date();
+    setScanStarted(started.getTime());
+    setBeforeScore(null);
     setBusy(true);
     setScanState("running");
     const rows: ScanRow[] = SCAN_STEPS.map((step) => ({ ...step, phase: "waiting" }));
     setScanRows(rows);
     const nextFindings: Finding[] = [];
     setFindings([]);
+    let cancelled = false;
     try {
       for (let index = 0; index < rows.length; index += 1) {
         const step = rows[index];
         if (!step) continue;
+        if (cancelScan.current) {
+          cancelled = true;
+          for (let later = index; later < rows.length; later += 1) {
+            const pending = rows[later];
+            if (!pending || pending.phase === "done") continue;
+            rows[later] = { ...pending, phase: "done" };
+            nextFindings.push({
+              id: pending.id,
+              label: pending.label,
+              actionId: pending.actionId,
+              grade: "unknown",
+              summary: "Not started. The scan was cancelled.",
+              marks: {},
+            });
+          }
+          setScanRows([...rows]);
+          setFindings([...nextFindings]);
+          break;
+        }
+        const slow = step.actionId === "dism-check" || step.actionId === "sfc-verify";
         rows[index] = { ...step, phase: "running" };
         setScanRows([...rows]);
         const result = await runOne(
@@ -267,26 +298,42 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         nextFindings.push(findingFromResult(step, result));
         setScanRows([...rows]);
         setFindings([...nextFindings]);
+        if (cancelScan.current && slow) setScanNote("Windows is completing a non-interruptible operation.");
       }
+      const finished = new Date().toISOString();
+      const windows = nextFindings.find((item) => item.id === "windows");
+      const choices = repairChoices(nextFindings);
+      const report = buildScanReport({
+        startedAt: started.toISOString(),
+        finishedAt: finished,
+        platform: profile.platform,
+        windowsVersion: windows?.marks.PRODUCT,
+        build: windows?.marks.BUILD,
+        findings: nextFindings,
+        recommendations: choices,
+        cancelled,
+      });
       const score = healthScore(nextFindings);
       record("full-scan", "Full system scan", {
         actionId: "full-scan",
         title: "Full system scan",
-        state: score.score == null ? "unavailable" : score.status === "Healthy" ? "success" : "warning",
-        summary:
-          score.score == null
-            ? "Not scored. No category returned a measured grade."
-            : `Score ${score.score} · ${score.status}. ${score.included.length} categories included.`,
-        exitCode: 0,
-        durationMs: 0,
+        state: cancelled ? "cancelled" : score.score == null ? "unavailable" : score.status === "excellent" || score.status === "good" ? "success" : "warning",
+        summary: cancelled
+          ? `Scan cancelled. ${score.score == null ? "Not scored from the checks that finished." : `Score ${score.score} from the checks that finished.`}`
+          : score.score == null
+            ? "Not scored. No weighted category returned a measured grade."
+            : `Score ${score.score} · ${statusLabel(score.status)}. ${report.issues.length} issues. Nothing was repaired.`,
+        exitCode: cancelled ? null : 0,
+        durationMs: report.durationMs,
         output: nextFindings.map((item) => `${item.label}=${item.grade}`).join("\n"),
-        startedAt: new Date().toISOString(),
-        commands: ["Full system scan. Diagnostics only. Nothing was repaired."],
+        startedAt: started.toISOString(),
+        commands: ["Full system scan. Read-only diagnostics. Nothing was repaired."],
         isWindows: profile.isWindows,
       });
-      setScanState(score.score == null ? "unavailable" : "success");
+      setScanState(cancelled ? "cancelled" : score.score == null ? "unavailable" : "success");
     } finally {
       setBusy(false);
+      setScanNote(null);
     }
   }
 
@@ -294,6 +341,7 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     const selected = choices.filter((item) => item.selected);
     setFlow(null);
     if (selected.length === 0) return;
+    setBeforeScore(healthScore(findings ?? []).score);
     const planned: JobStep[] = [];
     if (withRestore && profile.isWindows) planned.push({ label: "Restore point", actionId: "restore-point", state: "waiting" });
     for (const item of selected) planned.push({ label: item.title, actionId: item.actionId, state: "waiting" });
@@ -626,7 +674,11 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
                   onRepair={() => {
                     const choices = repairChoices(findings ?? []);
                     if (choices.length === 0) return;
-                    setFlow({ kind: "repairs", choices });
+                    setFlow({
+                      kind: "repairs",
+                      choices,
+                      restore: profile.isWindows && settings.restoreBeforeRepair && recommendRestore(findings ?? []),
+                    });
                   }}
                   onOpenSecurity={() => {
                     setBusy(true);
@@ -649,6 +701,13 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
                   }
                   onDetails={(result, tool) => setFlow({ kind: "details", result, tool })}
                   job={job}
+                  scanNote={scanNote}
+                  scanStarted={scanStarted}
+                  beforeScore={beforeScore}
+                  onCancelScan={() => {
+                    cancelScan.current = true;
+                    setScanNote("Stopping after the current check. DISM and system file verification are not interrupted.");
+                  }}
                 />
               ) : section === "activity" ? (
                 <ActivityView
@@ -686,27 +745,12 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
       {flow?.kind === "repairs" ? (
         <RepairDialog
           choices={flow.choices}
-          onChange={(choices) => setFlow({ kind: "repairs", choices })}
+          restore={flow.restore}
+          allowRestore={profile.isWindows}
+          onChange={(choices) => setFlow({ kind: "repairs", choices, restore: flow.restore })}
+          onRestore={(restore) => setFlow({ kind: "repairs", choices: flow.choices, restore })}
           onCancel={() => setFlow(null)}
-          onStart={() => {
-            if (profile.isWindows && settings.restoreBeforeRepair) {
-              setPendingRepairs(flow.choices);
-              setFlow({
-                kind: "restore",
-                tool: {
-                  id: "approved-repair",
-                  section: "optimize",
-                  title: "Recommended repair",
-                  summary: "",
-                  risk: "moderate",
-                  actionId: "restore-point",
-                },
-                params: { approved: "1" },
-              });
-              return;
-            }
-            void executeRepairs(flow.choices, false);
-          }}
+          onStart={() => void executeRepairs(flow.choices, flow.restore && profile.isWindows)}
         />
       ) : null}
       {flow?.kind === "confirm" ? (
@@ -726,18 +770,10 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         <RestoreDialog
           onCancel={() => setFlow(null)}
           onSkip={() => {
-            if (flow.params.approved === "1") {
-              void executeRepairs(pendingRepairs, false);
-              return;
-            }
             if (flow.params.smart) void smartRepair(false);
             else void continueWithoutRestore(flow.tool, flow.params);
           }}
           onCreate={() => {
-            if (flow.params.approved === "1") {
-              void executeRepairs(pendingRepairs, true);
-              return;
-            }
             if (flow.params.smart) void smartRepair(true);
             else void continueWithRestore(flow.tool, flow.params);
           }}
@@ -1168,23 +1204,40 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint?: stri
 
 function RepairDialog({
   choices,
+  restore,
+  allowRestore,
   onChange,
+  onRestore,
   onCancel,
   onStart,
 }: {
   choices: RepairChoice[];
+  restore: boolean;
+  allowRestore: boolean;
   onChange: (choices: RepairChoice[]) => void;
+  onRestore: (restore: boolean) => void;
   onCancel: () => void;
   onStart: () => void;
 }) {
   const heavy = choices.some((item) => item.selected && (item.actionId === "dism-smart" || item.actionId === "sfc-smart"));
   return (
     <SimpleDialog
-      title="Repair recommended issues"
-      body={heavy ? "Image or system-file repair often takes 10–40 minutes. REcleaner does not show a percent." : "Only the checked items will run."}
+      title="Recommended repair plan"
+      body={heavy ? "Image or system-file repair often takes 10–40 minutes. There is no percent." : "Only the checked items will run. Nothing else is changed."}
       onCancel={onCancel}
     >
-      <ul className="mb-4 space-y-3 text-left">
+      <ul className="mb-4 max-h-64 space-y-3 overflow-y-auto text-left">
+        {allowRestore ? (
+          <li>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1 size-4 accent-current" checked={restore} onChange={(event) => onRestore(event.target.checked)} />
+              <span>
+                <span className="block">Create a restore point</span>
+                <span className="mt-1 block text-xs leading-5 text-muted">Runs first. If it fails, the repairs do not start.</span>
+              </span>
+            </label>
+          </li>
+        ) : null}
         {choices.map((item) => (
           <li key={item.actionId}>
             <label className="flex items-start gap-2 text-sm">
@@ -1196,14 +1249,17 @@ function RepairDialog({
               />
               <span>
                 <span className="block">{item.title}</span>
-                <span className="mt-1 block text-xs leading-5 text-muted">{item.detail}</span>
+                <span className="mt-1 block text-xs leading-5 text-muted">
+                  {item.risk === "high" ? "High impact. " : item.risk === "moderate" ? "Moderate. " : ""}
+                  {item.detail}
+                </span>
               </span>
             </label>
           </li>
         ))}
       </ul>
       <button type="button" className="h-11 rounded-md bg-paper px-4 text-sm font-medium text-paper-fg disabled:opacity-40" disabled={!choices.some((item) => item.selected)} onClick={onStart}>
-        Start repair
+        Review & repair
       </button>
       <button type="button" className="h-11 px-3 text-sm text-muted" onClick={onCancel}>
         Cancel

@@ -48,15 +48,16 @@ test("dism repairable recommends RestoreHealth and does not treat 'not repairabl
   assert.equal(fix.repairId, "dism-smart");
 });
 
-test("score ignores unknown categories and uses equal weights", () => {
+test("weighted score ignores unknown categories", () => {
   const findings = [
-    findingFromResult({ id: "a", label: "A", actionId: "defender-status" }, result({ output: "GRADE=healthy\nSUMMARY=ok" })),
-    findingFromResult({ id: "b", label: "B", actionId: "wu-diagnose" }, result({ state: "unavailable", summary: "Windows only", output: "" })),
-    findingFromResult({ id: "c", label: "C", actionId: "disk-diagnose" }, result({ output: "GRADE=warning\nSUMMARY=low\nTEMP_BYTES=500000000\nREPAIR=clean-temp" })),
+    findingFromResult({ id: "security", label: "Security", actionId: "defender-status" }, result({ output: "GRADE=healthy\nSUMMARY=ok" })),
+    findingFromResult({ id: "update", label: "Windows Update", actionId: "wu-diagnose" }, result({ state: "unavailable", summary: "Windows only", output: "" })),
+    findingFromResult({ id: "disk", label: "Disk", actionId: "disk-diagnose" }, result({ output: "GRADE=warning\nSUMMARY=low\nTEMP_BYTES=500000000\nREPAIR=clean-temp" })),
   ];
   const score = healthScore(findings);
   assert.equal(score.included.length, 2);
-  assert.equal(score.score, Math.round((100 + 45) / 2));
+  assert.equal(score.score, 75);
+  assert.equal(score.status, "good");
   const repairs = repairChoices(findings);
   assert.equal(repairs.length, 1);
   assert.equal(repairs[0]?.actionId, "clean-temp");

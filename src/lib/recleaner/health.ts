@@ -1,4 +1,6 @@
 import type { ServerResult } from "./types";
+import { buildRepairPlan } from "./scan/plan.ts";
+import { scoreFindings, type ScanStatus } from "./scan/score.ts";
 
 export type Grade = "healthy" | "attention" | "warning" | "critical" | "unknown";
 
@@ -17,6 +19,7 @@ export type RepairChoice = {
   title: string;
   detail: string;
   selected: boolean;
+  risk: "safe" | "low" | "moderate" | "high";
 };
 
 export const SCAN_STEPS: { id: string; label: string; actionId: string }[] = [
@@ -38,38 +41,8 @@ export const SCAN_STEPS: { id: string; label: string; actionId: string }[] = [
   { id: "startup", label: "Startup", actionId: "startup-diagnose" },
 ];
 
-const REPAIR_COPY: Record<string, { title: string; detail: string }> = {
-  "dism-smart": {
-    title: "Repair the component store",
-    detail: "Runs DISM CheckHealth again. RestoreHealth starts only if Windows still reports the image as repairable.",
-  },
-  "sfc-smart": {
-    title: "Repair system files",
-    detail: "Runs sfc /verifyonly again. sfc /scannow starts only if verification still reports integrity violations.",
-  },
-  "clean-temp": {
-    title: "Clean temporary files",
-    detail: "Clears the temp locations that were measured. It does not remove Windows.old or personal documents.",
-  },
-  "wu-repair": {
-    title: "Repair Windows Update",
-    detail: "Stops the update services, renames SoftwareDistribution and catroot2, then starts the services. Folders are renamed, not deleted.",
-  },
-  "dns-flush": {
-    title: "Flush the DNS cache",
-    detail: "Runs ipconfig /flushdns only. It does not reset Winsock or TCP/IP.",
-  },
-};
-
-const ALLOWED_REPAIRS = new Set(Object.keys(REPAIR_COPY));
+const ALLOWED_REPAIRS = new Set(["dism-smart", "sfc-smart", "clean-temp", "wu-repair", "dns-flush"]);
 const MIN_CLEAN_BYTES = 200 * 1024 * 1024;
-
-const POINTS: Record<Exclude<Grade, "unknown">, number> = {
-  healthy: 100,
-  attention: 75,
-  warning: 45,
-  critical: 10,
-};
 
 export function parseMarks(output: string): Record<string, string> {
   const marks: Record<string, string> = {};
@@ -181,38 +154,30 @@ export function findingFromResult(step: { id: string; label: string; actionId: s
 
 export function healthScore(findings: Finding[]): {
   score: number | null;
-  status: "Healthy" | "Attention" | "Warning" | "Critical" | "Not scored";
+  status: ScanStatus;
   included: Finding[];
   excluded: Finding[];
+  rows: ReturnType<typeof scoreFindings>["rows"];
 } {
-  const included = findings.filter((item) => item.grade !== "unknown");
-  const excluded = findings.filter((item) => item.grade === "unknown");
-  if (included.length === 0) {
-    return { score: null, status: "Not scored", included, excluded };
-  }
-  const total = included.reduce((sum, item) => sum + POINTS[item.grade as Exclude<Grade, "unknown">], 0);
-  const score = Math.round(total / included.length);
-  const status = score >= 90 ? "Healthy" : score >= 75 ? "Attention" : score >= 50 ? "Warning" : "Critical";
-  return { score, status, included, excluded };
+  const scored = scoreFindings(findings);
+  const weightedIds = new Set(scored.rows.map((row) => row.id));
+  const included = findings.filter((item) => weightedIds.has(item.id) && item.grade !== "unknown");
+  const excluded = findings.filter((item) => !weightedIds.has(item.id) || item.grade === "unknown");
+  return { score: scored.score, status: scored.status, included, excluded, rows: scored.rows };
 }
 
 export function repairChoices(findings: Finding[]): RepairChoice[] {
-  const seen = new Set<string>();
-  const choices: RepairChoice[] = [];
-  for (const finding of findings) {
-    if (!finding.repairId || seen.has(finding.repairId)) continue;
-    const copy = REPAIR_COPY[finding.repairId];
-    if (!copy) continue;
-    seen.add(finding.repairId);
-    let title = copy.title;
-    if (finding.repairId === "clean-temp") {
-      const bytes = Number(finding.marks.TEMP_BYTES);
-      if (Number.isFinite(bytes)) title = `Clean ${formatBytes(bytes)} of temporary files`;
-    }
-    choices.push({ actionId: finding.repairId, title, detail: copy.detail, selected: true });
-  }
-  const order = ["dism-smart", "sfc-smart", "wu-repair", "dns-flush", "clean-temp"];
-  return choices.sort((a, b) => order.indexOf(a.actionId) - order.indexOf(b.actionId));
+  return buildRepairPlan(findings).steps.map((step) => ({
+    actionId: step.actionId,
+    title: step.title,
+    detail: step.reason,
+    selected: step.selected,
+    risk: step.risk,
+  }));
+}
+
+export function recommendRestore(findings: Finding[]): boolean {
+  return buildRepairPlan(findings).recommendRestore;
 }
 
 export function verifySteps(actionIds: string[]): { label: string; actionId: string }[] {
@@ -252,5 +217,8 @@ export function gradeLabel(grade: Grade): string {
 
 export function pointsFor(grade: Grade): number | null {
   if (grade === "unknown") return null;
-  return POINTS[grade];
+  if (grade === "healthy") return 100;
+  if (grade === "attention") return 75;
+  if (grade === "warning") return 50;
+  return 0;
 }

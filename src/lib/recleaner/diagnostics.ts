@@ -117,6 +117,9 @@ function Measure-Tree([string]$path) {
 }
 $temp = (Measure-Tree "$env:SystemRoot\\Temp") + (Measure-Tree $env:TEMP) + (Measure-Tree "$env:LOCALAPPDATA\\Temp") + (Measure-Tree "$env:LOCALAPPDATA\\Microsoft\\Windows\\INetCache")
 "TEMP_BYTES=$temp"
+if (Test-Path -LiteralPath "$env:SystemRoot\\Windows.old") { "WINDOWS_OLD=yes" } else { "WINDOWS_OLD=no" }
+$updateCache = Measure-Tree "$env:SystemRoot\\SoftwareDistribution\\Download"
+"UPDATE_CACHE_BYTES=$updateCache"
 $bad = 0
 try {
   $disks = @(Get-PhysicalDisk -ErrorAction Stop)
@@ -217,9 +220,15 @@ $warn = (Count-Level 'System' 3) + (Count-Level 'Application' 3)
 "WARNINGS=$warn"
 "WINDOW=72h"
 "CAP=200"
-if ($crit -gt 0) {
+$whea = @(Get-WinEvent -FilterHashtable @{ LogName='System'; ProviderName='Microsoft-Windows-WHEA-Logger'; Level=2; StartTime=$since } -MaxEvents 20 -ErrorAction SilentlyContinue).Count
+$diskErr = @(Get-WinEvent -FilterHashtable @{ LogName='System'; ProviderName='disk'; Level=2; StartTime=$since } -MaxEvents 20 -ErrorAction SilentlyContinue).Count
+$ntfs = @(Get-WinEvent -FilterHashtable @{ LogName='System'; ProviderName='Ntfs'; Level=2; StartTime=$since } -MaxEvents 20 -ErrorAction SilentlyContinue).Count
+"WHEA=$whea"
+"DISK_EVENTS=$diskErr"
+"NTFS=$ntfs"
+if ($crit -gt 0 -or $whea -gt 0 -or $diskErr -gt 0 -or $ntfs -gt 0) {
   "GRADE=warning"
-  "SUMMARY=Critical events were in the newest System and Application records examined (72 hours, 200 per query)."
+  "SUMMARY=Critical, disk, NTFS, or hardware-error events were in the 72-hour window. Counts are capped. Nothing was cleared."
 } elseif ($err -gt 10) {
   "GRADE=attention"
   "SUMMARY=Error events were in the examined window. This is a count, not a single-fault diagnosis."

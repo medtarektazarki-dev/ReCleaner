@@ -6,4 +6,5 @@ REcleaner does not vendor another project's source.
 
 Diagnostics and repairs call Windows programs that ship with Windows: DISM, SFC, PowerShell, netsh, ipconfig, winmgmt, WinGet, and the Windows Defender cmdlets. Those are used as installed on the PC. They are not copied into this repository.
 
-No telemetry is sent. Full system scan does not upload logs, credentials, or personal files.
+Diagnostics use the Windows commands documented by Microsoft. [Repair a Windows Image](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/repair-a-windows-image) distinguishes CheckHealth and ScanHealth from RestoreHealth. [sfc](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/sfc) documents `/verifyonly` as a check and `/scannow` as a repair. No third-party diagnostic library was added.
+

@@ -36,9 +36,9 @@ Full system scan is the primary check. It does not repair anything by itself.
 
 On Windows it reads, in order: Windows version and build, memory, component store (`DISM /CheckHealth`, then `/ScanHealth` only if that check is inconclusive), system files (`sfc /verifyonly`), Windows Update services, Defender, firewall profiles, disk health and a measured temp-file size, network, an allowlisted set of services, WinGet, recent event counts, crash evidence, WMI, Explorer, and startup commands.
 
-The score is an equal-weight average of categories that returned a grade: healthy 100, attention 75, warning 45, critical 10. Unknown, unavailable, and needs-admin results are left out. If nothing was measured, the score is not shown.
+The score uses fixed weights: Windows image 15, system files 15, Windows Update 10, security 15, firewall 10, disk 15, services 10, network 5, crashes 5. Healthy keeps the full weight, attention keeps 75 percent, warning keeps 50 percent, and critical keeps none. Unknown results are left out and the remaining weights are scaled to 100. If nothing in those categories was measured, the score is not shown. Other checks are listed and do not move the number.
 
-Repair recommended issues lists only repairs the scan's own output asked for: component-store repair, system-file repair, Windows Update folder rename, DNS flush, or temp cleanup above 200 MB. Firewall changes and security settings are not in that list. After a repair, the related diagnostic runs again.
+Repair recommended issues lists only repairs the scan's own output asked for. Component-store repair is ordered before system-file repair when both are needed. DNS flush and firewall changes are offered unchecked. Network stack reset, security changes, and deletions are not part of the scan. After a repair, the related diagnostic runs again. Cancel stops the scan after the current check. DISM and system file verification are not killed mid-command.
 
 On a machine that is not Windows, each of those checks returns unavailable and the score stays unscored.
 

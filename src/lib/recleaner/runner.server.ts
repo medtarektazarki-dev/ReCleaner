@@ -295,9 +295,9 @@ $names = @('RpcSs','DcomLaunch','EventLog','Schedule','Winmgmt','CryptSvc','Dhcp
 $warn = 0
 foreach ($n in $names) {
   $s = Get-CimInstance Win32_Service -Filter ('Name=''' + $n + '''') -ErrorAction SilentlyContinue
-  if (-not $s) { Write-Output ($n + '  missing'); continue }
+  if (-not $s) { Write-Output ($n + '  missing'); $warn++; continue }
   $flag = 'OK'
-  if ($s.State -ne 'Running' -and ($s.StartMode -eq 'Auto' -or $s.StartMode -eq 'Disabled')) { $flag = 'ATTENTION'; $warn++ }
+  if ($s.State -eq 'Stopped' -and $s.StartMode -eq 'Auto') { $flag = 'ATTENTION'; $warn++ }
   Write-Output ($n + '  ' + $s.State + '  ' + $s.StartMode + '  ' + $flag)
 }
 Write-Output ('ATTENTION_COUNT=' + $warn)

@@ -1,13 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
-import { formatGiB, formatStamp, formatUptime, platformLabel } from "@/lib/recleaner/format";
-import {
-  gradeLabel,
-  healthScore,
-  pointsFor,
-  type Finding,
-  type Grade,
-} from "@/lib/recleaner/health";
+import { formatDuration, formatGiB, formatStamp, formatUptime, platformLabel } from "@/lib/recleaner/format";
+import { gradeLabel, healthScore, type Finding, type Grade } from "@/lib/recleaner/health";
+import { statusLabel } from "@/lib/recleaner/scan/score";
 import type { HostProfile, ServerResult } from "@/lib/recleaner/types";
 import { SystemCore } from "./core";
 
@@ -46,6 +41,10 @@ export function FullScanScreen({
   onDetails,
   repairCount,
   job,
+  scanNote,
+  scanStarted,
+  beforeScore,
+  onCancelScan,
 }: {
   profile: HostProfile;
   posture: "steady" | "watch" | "strained";
@@ -59,11 +58,27 @@ export function FullScanScreen({
   onDetails: (result: ServerResult, tool: string) => void;
   repairCount: number;
   job: { title: string; steps: { label: string; actionId: string; state: string; summary?: string }[] } | null;
+  scanNote: string | null;
+  scanStarted: number | null;
+  beforeScore: number | null;
+  onCancelScan: () => void;
 }) {
   const [math, setMath] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const scored = findings ? healthScore(findings) : null;
   const scanning = busy && rows.some((row) => row.phase !== "done");
+  useEffect(() => {
+    if (!scanning) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [scanning]);
   const issues = findings?.filter((item) => item.grade === "attention" || item.grade === "warning" || item.grade === "critical") ?? [];
+  const counts = {
+    healthy: findings?.filter((item) => item.grade === "healthy").length ?? 0,
+    warning: findings?.filter((item) => item.grade === "attention" || item.grade === "warning").length ?? 0,
+    critical: findings?.filter((item) => item.grade === "critical").length ?? 0,
+    unknown: findings?.filter((item) => item.grade === "unknown").length ?? 0,
+  };
   const windows = findings?.find((item) => item.id === "windows");
   const unsupported = windows?.marks.WINDOWS11 === "no";
   const defender = findings?.find((item) => item.id === "security");
@@ -76,12 +91,17 @@ export function FullScanScreen({
         {scanning ? (
           <>
             <h1 className="mt-3 text-3xl font-medium tracking-tight">Checking Windows</h1>
-            <p className="mt-3 max-w-md text-sm leading-6 text-muted">Each line waits for that diagnostic. There is no estimated percent.</p>
+            <p className="mt-3 max-w-md text-sm leading-6 text-muted">
+              {scanStarted ? `Elapsed ${formatDuration(Math.max(0, now - scanStarted))}. ` : ""}
+              Each line waits for that diagnostic. There is no estimated percent.
+            </p>
+            {scanNote ? <p className="mt-2 max-w-md text-sm text-warn">{scanNote}</p> : null}
           </>
         ) : findings && scored ? (
           <>
             <h1 className="mt-3 text-5xl font-medium tracking-tight tabular-nums">{scored.score == null ? "—" : scored.score}</h1>
-            <p className="mt-2 text-sm text-muted">{scored.status}</p>
+            <p className="mt-2 text-sm text-muted">{statusLabel(scored.status)}</p>
+            {beforeScore != null && scored.score != null ? <p className="mt-1 text-xs text-subtle">Before {beforeScore}</p> : null}
           </>
         ) : (
           <>
@@ -98,9 +118,14 @@ export function FullScanScreen({
           <button type="button" disabled={busy} className="h-11 rounded-md bg-paper px-4 text-sm font-medium text-paper-fg disabled:opacity-40" onClick={onScan}>
             {scanning ? "Scanning…" : findings ? "Scan again" : "Full system scan"}
           </button>
+          {scanning ? (
+            <button type="button" className="h-11 rounded-md border border-line px-4 text-sm font-medium" onClick={onCancelScan}>
+              Cancel scan
+            </button>
+          ) : null}
           {findings && !scanning ? (
             <button type="button" disabled={busy || repairCount === 0} className="h-11 rounded-md border border-line px-4 text-sm font-medium disabled:opacity-40" onClick={onRepair}>
-              Repair recommended issues
+              Review & repair
             </button>
           ) : null}
         </div>
@@ -152,6 +177,12 @@ export function FullScanScreen({
           <>
             <p className="text-xs tracking-widest text-subtle">ISSUES FOUND</p>
             <p className="mt-2 text-3xl font-medium tabular-nums">{issues.length}</p>
+            <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
+              <Side k="Healthy" v={String(counts.healthy)} />
+              <Side k="Warnings" v={String(counts.warning)} />
+              <Side k="Critical" v={String(counts.critical)} />
+              <Side k="Unknown" v={String(counts.unknown)} />
+            </dl>
             <ul className="mt-4 space-y-3">
               {issues.length === 0 ? <li className="text-sm text-muted">No scored category needs attention.</li> : null}
               {issues.map((item) => (
@@ -176,16 +207,16 @@ export function FullScanScreen({
             </button>
             {math ? (
               <div className="mt-3 space-y-2 text-xs leading-5 text-muted">
-                <p>Equal weight. Healthy 100, attention 75, warning 45, critical 10. Unknown results are left out. The score is the rounded average.</p>
+                <p>Weighted categories only. Healthy 100% of its weight, attention 75%, warning 50%, critical 0. Unknown results are left out and the remaining weights are scaled to 100. Windows version, memory, events, apps, shell, startup, and WMI are reported and do not move the score.</p>
                 <ul className="space-y-1">
-                  {findings.map((item) => (
-                    <li key={item.id} className="flex justify-between gap-3">
-                      <span>{item.label}</span>
-                      <span className="tabular-nums">{pointsFor(item.grade) ?? "—"}</span>
+                  {scored.rows.map((row) => (
+                    <li key={row.id} className="flex justify-between gap-3">
+                      <span>{row.id}</span>
+                      <span className="tabular-nums">{row.points == null ? "—" : `${row.points}/${row.weight}`}</span>
                     </li>
                   ))}
                 </ul>
-                <p>{scored.included.length} categories included. {scored.excluded.length} not scored.</p>
+                <p>{scored.included.length} weighted categories included. {scored.excluded.length} not in the score.</p>
               </div>
             ) : null}
           </>
