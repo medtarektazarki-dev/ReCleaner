@@ -161,7 +161,8 @@ export function findingFromResult(step: { id: string; label: string; actionId: s
     return { ...step, grade: memory.grade, summary: memory.summary, marks };
   }
   let grade = gradeOf(marks.GRADE);
-  if (grade === "unknown" && !marks.GRADE) {
+  const scanStep = SCAN_STEPS.some((item) => item.id === step.id);
+  if (grade === "unknown" && !marks.GRADE && !scanStep) {
     if (result.state === "success") grade = "healthy";
     else if (result.state === "error") grade = "warning";
     else if (result.state === "warning") grade = "attention";

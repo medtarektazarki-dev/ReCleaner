@@ -25,11 +25,7 @@ import { NAV, SECTION_COPY, TOOLS, toolsIn } from "@/lib/recleaner/catalog";
 import { getHostProfile, runAction } from "@/lib/recleaner/actions";
 import {
   formatDuration,
-  formatGiB,
-  formatStamp,
-  formatUptime,
   platformLabel,
-  postureLabel,
   resourcePosture,
   riskLabel,
   stateLabel,
@@ -37,7 +33,6 @@ import {
 import { FIELD_META, commandPreview, getPlan, validateField, type FieldKey } from "@/lib/recleaner/plans";
 import { useRecleaner } from "@/lib/recleaner/store";
 import type { HostProfile, LogEntry, RunState, SectionId, ServerResult, Tool } from "@/lib/recleaner/types";
-import { SystemCore } from "./core";
 import { Mark, Wordmark } from "./mark";
 import { isDesktop } from "@/lib/recleaner/desktop";
 import { FullScanScreen, type ScanRow } from "./full-scan";
@@ -91,19 +86,6 @@ function tone(state: string): string {
   return "text-subtle";
 }
 
-function advice(profile: HostProfile): string[] {
-  const posture = resourcePosture(profile);
-  const lines: string[] = [];
-  if (!profile.isWindows) {
-    lines.push("Repair and cleanup run only on Windows. Nothing on a PC is changed from this host.");
-  } else if (!profile.isAdmin) {
-    lines.push("Administrator access is required before a repair can start.");
-  }
-  if (posture.level === "strained") lines.push("Memory is low or the host is busy. Pause heavy work before a long task.");
-  else if (posture.level === "watch") lines.push("Free memory is getting tight.");
-  else if (profile.isWindows) lines.push("Resources look settled. Scan system only refreshes this reading.");
-  return lines;
-}
 
 export function RecleanerApp({ initial }: { initial: HostProfile }) {
   const refreshServer = useServerFn(getHostProfile);
@@ -113,7 +95,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
   const hydrated = useRecleaner((s) => s.hydrated);
   const states = useRecleaner((s) => s.states);
   const hydrate = useRecleaner((s) => s.hydrate);
-  const setSettings = useRecleaner((s) => s.setSettings);
   const finishWelcome = useRecleaner((s) => s.finishWelcome);
   const setToolState = useRecleaner((s) => s.setToolState);
   const record = useRecleaner((s) => s.record);
@@ -128,7 +109,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
   const [busy, setBusy] = useState(false);
   const [flow, setFlow] = useState<Flow | null>(null);
   const [job, setJob] = useState<{ title: string; steps: JobStep[] } | null>(null);
-  const [scanState, setScanState] = useState<RunState>("ready");
   const [scanRows, setScanRows] = useState<ScanRow[]>([]);
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [scanNote, setScanNote] = useState<string | null>(null);
@@ -188,55 +168,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     if (result.state !== "success") setFlow({ kind: "details", result, tool: "Restart as administrator" });
   }
 
-  async function scan() {
-    if (busy) return;
-    setBusy(true);
-    setScanState("running");
-    const started = Date.now();
-    try {
-      const next = await refresh();
-      setProfile(next);
-      const result: ServerResult = {
-        actionId: "host-read",
-        title: "Scan system",
-        state: "success",
-        summary: next.isWindows
-          ? "This PC was read. No changes were made."
-          : "Host resources were read. No changes were made.",
-        exitCode: 0,
-        durationMs: Date.now() - started,
-        output: [
-          `platform ${next.platform}`,
-          `cpus ${next.cpus}`,
-          `free ${formatGiB(next.freeMem)} GB`,
-          `total ${formatGiB(next.totalMem)} GB`,
-          `admin ${next.isAdmin ? "yes" : "no"}`,
-        ].join("\n"),
-        startedAt: new Date(started).toISOString(),
-        commands: ["Read processor, memory, uptime, platform, and administrator state."],
-        isWindows: next.isWindows,
-      };
-      record("scan", "Scan system", result);
-      setScanState("success");
-    } catch (error) {
-      const result: ServerResult = {
-        actionId: "host-read",
-        title: "Scan system",
-        state: "error",
-        summary: error instanceof Error ? error.message : "The reading failed.",
-        exitCode: 1,
-        durationMs: Date.now() - started,
-        output: "",
-        startedAt: new Date(started).toISOString(),
-        commands: [],
-        isWindows: profile.isWindows,
-      };
-      record("scan", "Scan system", result);
-      setScanState("error");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function fullScan() {
     if (busy) return;
@@ -247,7 +178,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     setScanStarted(started.getTime());
     setBeforeScore(null);
     setBusy(true);
-    setScanState("running");
     const rows: ScanRow[] = SCAN_STEPS.map((step) => ({ ...step, phase: "waiting" }));
     setScanRows(rows);
     const nextFindings: Finding[] = [];
@@ -342,7 +272,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         commands: ["Full system scan. Read-only diagnostics. Nothing was repaired."],
         isWindows: profile.isWindows,
       });
-      setScanState(cancelled ? "cancelled" : score.score == null ? "unavailable" : "success");
       setScanIncomplete(cancelled);
     } finally {
       setBusy(false);
@@ -534,35 +463,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function smartRepair(withRestore: boolean) {
-    setFlow(null);
-    const steps = [{ label: "System check", actionId: "host-read" }];
-    if (withRestore) steps.push({ label: "Restore point", actionId: "restore-point" });
-    steps.push(...QUICK, { label: "Service verification", actionId: "services-diagnostic" }, { label: "Final verification", actionId: "host-read" });
-    await runSequence("Smart repair", steps, false);
-  }
-
-  function askSmart() {
-    if (busy) return;
-    if (!profile.isWindows || !settings.restoreBeforeRepair) {
-      void smartRepair(false);
-      return;
-    }
-    setFlow({
-      kind: "restore",
-      tool: {
-        id: "smart",
-        section: "optimize",
-        title: "Smart repair",
-        summary: "",
-        risk: "moderate",
-        actionId: "host-read",
-        suite: "quick",
-      },
-      params: { smart: "1" },
-    });
   }
 
   if (closed) {
@@ -801,12 +701,10 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         <RestoreDialog
           onCancel={() => setFlow(null)}
           onSkip={() => {
-            if (flow.params.smart) void smartRepair(false);
-            else void continueWithoutRestore(flow.tool, flow.params);
+            void continueWithoutRestore(flow.tool, flow.params);
           }}
           onCreate={() => {
-            if (flow.params.smart) void smartRepair(true);
-            else void continueWithRestore(flow.tool, flow.params);
+            void continueWithRestore(flow.tool, flow.params);
           }}
         />
       ) : null}
@@ -944,120 +842,6 @@ function Caption({ children, label, onClick, danger }: { children: ReactNode; la
   );
 }
 
-function Overview({
-  profile,
-  posture,
-  scanState,
-  busy,
-  job,
-  expanded,
-  onScan,
-  onSmart,
-  onDetails,
-}: {
-  profile: HostProfile;
-  posture: "steady" | "watch" | "strained";
-  scanState: RunState;
-  busy: boolean;
-  job: { title: string; steps: JobStep[] } | null;
-  expanded: boolean;
-  onScan: () => void;
-  onSmart: () => void;
-  onDetails: (result: ServerResult, tool: string) => void;
-}) {
-  const lines = advice(profile);
-  return (
-    <div className={cn("flex min-h-full flex-col lg:flex-row", expanded && "lg:flex-col")}>
-      <section className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
-        <p className="text-xs tracking-widest text-subtle">SYSTEM HEALTH</p>
-        <h1 className="mt-3 text-4xl font-medium tracking-tight">{postureLabel(posture)}</h1>
-        <p className="mt-3 max-w-md text-sm leading-6 text-muted">
-          {formatGiB(profile.freeMem)} GB free of {formatGiB(profile.totalMem)} GB.{" "}
-          {profile.isWindows
-            ? "This is this PC. It is not an image-health verdict until a repair check runs."
-            : "This is the host running REcleaner, not a Windows image verdict."}
-        </p>
-        <SystemCore level={posture} />
-        <p className="text-xs tracking-widest text-subtle">SYSTEM CORE</p>
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-          <button type="button" disabled={busy} className="h-11 rounded-md border border-line px-4 text-sm font-medium disabled:opacity-40" onClick={onScan}>
-            {scanState === "running" ? "Running…" : "Scan system"}
-          </button>
-          <button type="button" disabled={busy} className="h-11 rounded-md bg-paper px-4 text-sm font-medium text-paper-fg disabled:opacity-40" onClick={onSmart}>
-            Smart repair
-          </button>
-        </div>
-        <p className={cn("mt-3 text-xs", tone(scanState))}>{scanState === "ready" ? "Checks first. Changes nothing by itself." : stateLabel(scanState)}</p>
-        {job ? (
-          <ol className="mt-8 w-full max-w-md space-y-3 text-left">
-            <li className="text-xs tracking-widest text-subtle">{job.title.toUpperCase()}</li>
-            {job.steps.map((step) => (
-              <li key={step.actionId + step.label} className="flex items-start justify-between gap-4 border-t border-line pt-3">
-                <span>
-                  <span className="block text-sm">{step.label}</span>
-                  {step.summary ? <span className="mt-1 block text-xs text-muted">{step.summary}</span> : null}
-                </span>
-                <span className={cn("shrink-0 text-xs", tone(step.state))}>{step.state === "running" ? "Running…" : labelStep(step.state)}</span>
-              </li>
-            ))}
-          </ol>
-        ) : null}
-      </section>
-      <aside className="border-t border-line px-6 py-8 lg:w-80 lg:border-t-0 lg:border-l">
-        <p className="text-xs tracking-widest text-subtle">SYSTEM STATUS</p>
-        <dl className="mt-4 space-y-3 text-sm">
-          <Status k="Platform" v={`${platformLabel(profile.platform)} ${profile.arch}`} />
-          <Status k="Memory" v={`${formatGiB(profile.freeMem)} / ${formatGiB(profile.totalMem)} GB free`} />
-          <Status k="Processor" v={`${profile.cpus} · ${trimCpu(profile.cpuModel)}`} />
-          <Status k="Uptime" v={formatUptime(profile.uptime)} />
-          <Status k="Administrator" v={profile.isWindows ? (profile.isAdmin ? "Yes" : "No") : "Not Windows"} />
-          <Status k="Last reading" v={formatStamp(profile.readAt)} />
-        </dl>
-        <p className="mt-8 text-xs tracking-widest text-subtle">RECOMMENDATIONS</p>
-        <ul className="mt-4 space-y-4">
-          {lines.map((line) => (
-            <li key={line} className="text-sm leading-6 text-muted">
-              {line}
-            </li>
-          ))}
-        </ul>
-        {useRecleaner.getState().results.scan ? (
-          <button
-            type="button"
-            className="mt-6 text-sm text-fg underline decoration-line underline-offset-4"
-            onClick={() => {
-              const result = useRecleaner.getState().results.scan;
-              if (result) onDetails(result, "Scan system");
-            }}
-          >
-            View last scan
-          </button>
-        ) : null}
-      </aside>
-    </div>
-  );
-}
-
-function Status({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-subtle">{k}</dt>
-      <dd className="text-right tabular-nums text-fg">{v}</dd>
-    </div>
-  );
-}
-
-function trimCpu(model: string): string {
-  const clean = model.replace(/\s+/g, " ").trim();
-  return clean.length > 28 ? `${clean.slice(0, 28)}…` : clean;
-}
-
-function labelStep(state: JobStep["state"]): string {
-  if (state === "waiting") return "Waiting";
-  if (state === "blocked") return "Not started";
-  if (state === "skipped") return "Skipped";
-  return stateLabel(state as RunState);
-}
 
 function ToolList({
   section,
@@ -1411,6 +1195,15 @@ function Field({ field, value, onChange }: { field: FieldKey; value: string; onC
         className="mt-1 h-11 w-full rounded-md border border-line bg-bg px-3 text-fg outline-none placeholder:text-subtle"
       />
     </label>
+  );
+}
+
+function Status({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <dt className="text-subtle">{k}</dt>
+      <dd className="text-right tabular-nums text-fg">{v}</dd>
+    </div>
   );
 }
 

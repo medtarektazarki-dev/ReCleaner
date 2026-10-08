@@ -407,7 +407,7 @@ sequential("gamer-cache", "Game cache", [
 sequential("oem-key", "OEM product key", [
   ps(
     "Read OA3 key",
-    "$key = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey; if ($key) { 'OEM key: ' + $key } else { 'No OEM key in firmware.'; exit 2 }",
+    "$key = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey; if ($key -and $key.Length -ge 5) { 'An OEM key is present in firmware. Last five characters: ' + $key.Substring($key.Length - 5) } else { 'No OEM key in firmware.'; exit 2 }",
   ),
 ], { notes: ["Reads the firmware OEM key. It is not a retail license."] });
 

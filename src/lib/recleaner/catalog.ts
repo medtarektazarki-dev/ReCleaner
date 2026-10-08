@@ -93,7 +93,7 @@ const CORE: Tool[] = [
   { id: "dns4", section: "advanced", title: "AdGuard DNS", summary: "Sets active adapters to AdGuard DNS.", risk: "low", actionId: "dns-adguard" },
   { id: "dns5", section: "advanced", title: "Automatic DNS", summary: "Returns adapters to DHCP DNS.", risk: "low", actionId: "dns-default" },
   { id: "games", section: "advanced", title: "Game caches", summary: "Clears Discord, Steam, Epic, EA, and DirectX caches. Games and chat stay installed.", risk: "low", actionId: "gamer-cache" },
-  { id: "oem", section: "advanced", title: "OEM product key", summary: "Reads the firmware OEM key, if the manufacturer stored one.", risk: "safe", actionId: "oem-key" },
+  { id: "oem", section: "advanced", title: "OEM product key", summary: "Reports whether firmware has an OEM key, and only the last five characters.", risk: "safe", actionId: "oem-key" },
   { id: "own-on", section: "advanced", title: "Add Take Ownership", summary: "Adds a right-click command that takes ownership of a file or folder.", risk: "moderate", confirm: "Add Take Ownership to the context menu?", actionId: "takeown-add" },
   { id: "own-off", section: "advanced", title: "Remove Take Ownership", summary: "Removes the Take Ownership command.", risk: "low", actionId: "takeown-remove" },
   { id: "bsod", section: "advanced", title: "Crash records", summary: "Reads recent bugcheck events. Read only.", risk: "safe", actionId: "bsod" },

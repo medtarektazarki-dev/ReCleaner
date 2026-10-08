@@ -58,8 +58,8 @@ async function runProcess(file: string, args: string[], timeoutMs: number): Prom
   });
 }
 
-function scrub(text: string, keepKeys: boolean): string {
-  return redact(text, keepKeys);
+function scrub(text: string): string {
+  return redact(text);
 }
 
 function baseResult(
@@ -72,12 +72,12 @@ function baseResult(
     actionId: plan.id,
     title: plan.title,
     state,
-    summary,
+    summary: scrub(summary),
     exitCode: extra.exitCode ?? null,
     durationMs: Date.now() - extra.started,
-    output: scrub(extra.output ?? "", plan.id === "oem-key"),
+    output: scrub(extra.output ?? ""),
     startedAt: new Date(extra.started).toISOString(),
-    commands: commandPreview(plan),
+    commands: commandPreview(plan).map((line) => scrub(line)),
     isWindows: extra.isWindows,
   };
 }
@@ -292,7 +292,7 @@ async function runProbe(plan: Plan, started: number, isWindows: boolean): Promis
   );
 }
 
-const SERVICE_SCRIPT = `
+export const SERVICE_DIAGNOSTIC_SCRIPT = `
 $names = @('RpcSs','DcomLaunch','EventLog','Schedule','Winmgmt','CryptSvc','Dhcp','Dnscache','BITS','wuauserv','WinDefend','mpssvc','Spooler','WlanSvc','bthserv','AudioSrv')
 $warn = 0
 foreach ($n in $names) {
@@ -360,7 +360,7 @@ async function dispatch(plan: Plan, params: Record<string, string>, started: num
   if (plan.kind === "probe") return runProbe(plan, started, isWindows);
 
   if (plan.kind === "services") {
-    const result = await runProcess("powershell.exe", ["-NoProfile", "-Command", SERVICE_SCRIPT], plan.timeoutMs);
+    const result = await runProcess("powershell.exe", ["-NoProfile", "-Command", SERVICE_DIAGNOSTIC_SCRIPT], plan.timeoutMs);
     const attention = /ATTENTION_COUNT=([1-9]\d*)/.test(result.output);
     return baseResult(plan, result.error ? "error" : attention ? "warning" : "success", result.error ? "Service verification could not run." : attention ? "One or more automatic services need attention. Nothing was changed." : "Checked services are running or idle. Nothing was changed.", {
       started,
