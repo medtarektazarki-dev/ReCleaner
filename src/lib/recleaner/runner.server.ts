@@ -1,4 +1,6 @@
 import type { HostProfile, ServerResult } from "./types";
+import { PROBE_SCRIPT } from "./diagnostics";
+import { classifyDism, classifySfc, type Grade } from "./health";
 import {
   EDITIONS,
   applyTokens,
@@ -215,6 +217,79 @@ async function runSfc(plan: Plan, started: number, isWindows: boolean): Promise<
   });
 }
 
+function graded(
+  plan: Plan,
+  grade: Grade,
+  summary: string,
+  repairId: string | undefined,
+  raw: string,
+  started: number,
+  isWindows: boolean,
+  exitCode: number | null,
+): ServerResult {
+  const lines = [`GRADE=${grade}`, `SUMMARY=${summary.replace(/\s+/g, " ").trim()}`];
+  if (repairId) lines.push(`REPAIR=${repairId}`);
+  const state = grade === "healthy" ? "success" : grade === "critical" ? "error" : "warning";
+  return baseResult(plan, state, summary, { started, isWindows, output: `${lines.join("\n")}\n${raw}`, exitCode });
+}
+
+async function runDismCheck(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
+  const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth"], 180000);
+  const health = await runProcess("powershell.exe", ["-NoProfile", "-Command", DISM_HEALTH], 120000);
+  if (check.error) {
+    return graded(plan, "unknown", "DISM could not be started. No repair was started.", undefined, check.error, started, isWindows, null);
+  }
+  let raw = [check.output, health.output].filter(Boolean).join("\n");
+  let verdict = classifyDism({ check: check.output, imageState: health.output, scan: null });
+  if (verdict.needsScan) {
+    const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth"], 700000);
+    raw = `${raw}\n${scan.output}`;
+    if (scan.error) {
+      return graded(plan, "unknown", "ScanHealth could not be started. RestoreHealth was not started.", undefined, raw, started, isWindows, null);
+    }
+    verdict = classifyDism({ check: check.output, imageState: health.output, scan: scan.output });
+  }
+  return graded(plan, verdict.grade, verdict.summary, verdict.repairId, raw, started, isWindows, check.code);
+}
+
+async function runSfcVerify(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
+  const verify = await runProcess("sfc.exe", ["/verifyonly"], plan.timeoutMs);
+  if (verify.error) {
+    return graded(plan, "unknown", "System file checker could not be started. Repair was not started.", undefined, verify.error, started, isWindows, null);
+  }
+  const verdict = classifySfc(verify.output);
+  return graded(plan, verdict.grade, verdict.summary, verdict.repairId, verify.output, started, isWindows, verify.code);
+}
+
+async function runProbe(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
+  const script = PROBE_SCRIPT[plan.id];
+  if (!script) {
+    return graded(plan, "unknown", "This diagnostic has no command.", undefined, "", started, isWindows, 1);
+  }
+  const result = await runProcess("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], plan.timeoutMs);
+  if (result.error || result.timedOut) {
+    return graded(
+      plan,
+      "unknown",
+      result.timedOut ? "The diagnostic was stopped because it ran too long. Nothing was changed." : "The diagnostic could not be started. Nothing was changed.",
+      undefined,
+      result.output || result.error || "",
+      started,
+      isWindows,
+      null,
+    );
+  }
+  if (!/^GRADE=/m.test(result.output)) {
+    return graded(plan, "unknown", "The diagnostic finished without a grade. Nothing was changed.", undefined, result.output, started, isWindows, result.code);
+  }
+  return baseResult(
+    plan,
+    /GRADE=healthy/.test(result.output) ? "success" : /GRADE=critical/.test(result.output) ? "error" : "warning",
+    result.output.match(/^SUMMARY=(.*)$/m)?.[1] || "The diagnostic finished. Read the details.",
+    { started, isWindows, output: result.output, exitCode: result.code },
+  );
+}
+
 const SERVICE_SCRIPT = `
 $names = @('RpcSs','DcomLaunch','EventLog','Schedule','Winmgmt','CryptSvc','Dhcp','Dnscache','BITS','wuauserv','WinDefend','mpssvc','Spooler','WlanSvc','bthserv','AudioSrv')
 $warn = 0
@@ -226,6 +301,13 @@ foreach ($n in $names) {
   Write-Output ($n + '  ' + $s.State + '  ' + $s.StartMode + '  ' + $flag)
 }
 Write-Output ('ATTENTION_COUNT=' + $warn)
+if ($warn -gt 0) {
+  'GRADE=attention'
+  'SUMMARY=One or more automatic services need attention. Nothing was changed.'
+} else {
+  'GRADE=healthy'
+  'SUMMARY=Checked services are running, or they are not set to start automatically. Nothing was changed.'
+}
 `.trim();
 
 async function dispatch(plan: Plan, params: Record<string, string>, started: number, isWindows: boolean): Promise<ServerResult> {
@@ -270,7 +352,10 @@ async function dispatch(plan: Plan, params: Record<string, string>, started: num
   }
 
   if (plan.kind === "dism") return runDism(plan, started, isWindows);
+  if (plan.kind === "dism-check") return runDismCheck(plan, started, isWindows);
   if (plan.kind === "sfc") return runSfc(plan, started, isWindows);
+  if (plan.kind === "sfc-verify") return runSfcVerify(plan, started, isWindows);
+  if (plan.kind === "probe") return runProbe(plan, started, isWindows);
 
   if (plan.kind === "services") {
     const result = await runProcess("powershell.exe", ["-NoProfile", "-Command", SERVICE_SCRIPT], plan.timeoutMs);

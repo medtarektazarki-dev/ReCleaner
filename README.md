@@ -30,6 +30,18 @@ The product is based on the functionality of the original WindowsRepairToolPro u
 
 Smart repair runs a fixed sequence: system check, optional restore point, image check, system file check, temporary cleanup, service verification, and a final reading. A failed restore point stops the repair. Image and system-file repair start only when Windows reports that a repair is needed.
 
+## Full system scan
+
+Full system scan is the primary check. It does not repair anything by itself.
+
+On Windows it reads, in order: Windows version and build, memory, component store (`DISM /CheckHealth`, then `/ScanHealth` only if that check is inconclusive), system files (`sfc /verifyonly`), Windows Update services, Defender, firewall profiles, disk health and a measured temp-file size, network, an allowlisted set of services, WinGet, recent event counts, crash evidence, WMI, Explorer, and startup commands.
+
+The score is an equal-weight average of categories that returned a grade: healthy 100, attention 75, warning 45, critical 10. Unknown, unavailable, and needs-admin results are left out. If nothing was measured, the score is not shown.
+
+Repair recommended issues lists only repairs the scan's own output asked for: component-store repair, system-file repair, Windows Update folder rename, DNS flush, or temp cleanup above 200 MB. Firewall changes and security settings are not in that list. After a repair, the related diagnostic runs again.
+
+On a machine that is not Windows, each of those checks returns unavailable and the score stays unscored.
+
 High-impact actions require an explicit confirmation. On a machine that is not Windows, those actions return unavailable and do not change anything.
 
 ## Architecture

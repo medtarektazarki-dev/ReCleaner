@@ -40,6 +40,8 @@ import type { HostProfile, LogEntry, RunState, SectionId, ServerResult, Tool } f
 import { SystemCore } from "./core";
 import { Mark, Wordmark } from "./mark";
 import { isDesktop } from "@/lib/recleaner/desktop";
+import { FullScanScreen, type ScanRow } from "./full-scan";
+import { SCAN_STEPS, findingFromResult, healthScore, repairChoices, verifySteps, type Finding, type RepairChoice } from "@/lib/recleaner/health";
 
 const ICONS: Record<SectionId, typeof Activity> = {
   overview: Activity,
@@ -76,6 +78,7 @@ type Flow =
   | { kind: "restore"; tool: Tool; params: Record<string, string> }
   | { kind: "params"; tool: Tool; params: Record<string, string>; error?: string }
   | { kind: "details"; result: ServerResult; tool: string }
+  | { kind: "repairs"; choices: RepairChoice[] }
   | { kind: "close" };
 
 function tone(state: string): string {
@@ -124,6 +127,9 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
   const [flow, setFlow] = useState<Flow | null>(null);
   const [job, setJob] = useState<{ title: string; steps: JobStep[] } | null>(null);
   const [scanState, setScanState] = useState<RunState>("ready");
+  const [scanRows, setScanRows] = useState<ScanRow[]>([]);
+  const [findings, setFindings] = useState<Finding[] | null>(null);
+  const [pendingRepairs, setPendingRepairs] = useState<RepairChoice[]>([]);
 
   useEffect(() => {
     hydrate();
@@ -222,6 +228,131 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
       setScanState("error");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function fullScan() {
+    if (busy) return;
+    setBusy(true);
+    setScanState("running");
+    const rows: ScanRow[] = SCAN_STEPS.map((step) => ({ ...step, phase: "waiting" }));
+    setScanRows(rows);
+    const nextFindings: Finding[] = [];
+    setFindings([]);
+    try {
+      for (let index = 0; index < rows.length; index += 1) {
+        const step = rows[index];
+        if (!step) continue;
+        rows[index] = { ...step, phase: "running" };
+        setScanRows([...rows]);
+        const result = await runOne(
+          {
+            id: `scan-${step.id}`,
+            section: "optimize",
+            title: step.label,
+            summary: "Full system scan",
+            risk: "safe",
+            actionId: step.actionId,
+          },
+          {},
+        );
+        if (step.actionId === "host-read") {
+          try {
+            setProfile(await refresh());
+          } catch {
+            /* the probe result still stands */
+          }
+        }
+        rows[index] = { ...step, phase: "done", result };
+        nextFindings.push(findingFromResult(step, result));
+        setScanRows([...rows]);
+        setFindings([...nextFindings]);
+      }
+      const score = healthScore(nextFindings);
+      record("full-scan", "Full system scan", {
+        actionId: "full-scan",
+        title: "Full system scan",
+        state: score.score == null ? "unavailable" : score.status === "Healthy" ? "success" : "warning",
+        summary:
+          score.score == null
+            ? "Not scored. No category returned a measured grade."
+            : `Score ${score.score} · ${score.status}. ${score.included.length} categories included.`,
+        exitCode: 0,
+        durationMs: 0,
+        output: nextFindings.map((item) => `${item.label}=${item.grade}`).join("\n"),
+        startedAt: new Date().toISOString(),
+        commands: ["Full system scan. Diagnostics only. Nothing was repaired."],
+        isWindows: profile.isWindows,
+      });
+      setScanState(score.score == null ? "unavailable" : "success");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function executeRepairs(choices: RepairChoice[], withRestore: boolean) {
+    const selected = choices.filter((item) => item.selected);
+    setFlow(null);
+    if (selected.length === 0) return;
+    const planned: JobStep[] = [];
+    if (withRestore && profile.isWindows) planned.push({ label: "Restore point", actionId: "restore-point", state: "waiting" });
+    for (const item of selected) planned.push({ label: item.title, actionId: item.actionId, state: "waiting" });
+    for (const step of verifySteps(selected.map((item) => item.actionId))) {
+      planned.push({ label: step.label, actionId: step.actionId, state: "waiting" });
+    }
+    const verifyIds = new Set(verifySteps(selected.map((item) => item.actionId)).map((step) => step.actionId));
+    setJob({ title: "Recommended repair", steps: planned });
+    setBusy(true);
+    const nextSteps = planned.map((step) => ({ ...step }));
+    let repairsOpen = true;
+    let ranRepair = false;
+    try {
+      for (let index = 0; index < nextSteps.length; index += 1) {
+        const step = nextSteps[index];
+        if (!step) continue;
+        const verifying = verifyIds.has(step.actionId) && step.label.startsWith("Verify");
+        if (verifying && !ranRepair) {
+          nextSteps[index] = { ...step, state: "blocked", summary: "No repair ran, so verification was not started." };
+          continue;
+        }
+        if (!repairsOpen && !verifying) {
+          nextSteps[index] = { ...step, state: "blocked", summary: "Stopped because the restore point or administrator check did not succeed." };
+          continue;
+        }
+        if (!profile.isWindows && step.actionId !== "host-read") {
+          nextSteps[index] = { ...step, state: "blocked", summary: "Windows required. Not started." };
+          continue;
+        }
+        nextSteps[index] = { ...step, state: "running" };
+        setJob({ title: "Recommended repair", steps: [...nextSteps] });
+        const result = await runOne(
+          {
+            id: `repair-${step.actionId}-${index}`,
+            section: "optimize",
+            title: step.label,
+            summary: "Recommended repair",
+            risk: "moderate",
+            actionId: step.actionId,
+          },
+          {},
+        );
+        nextSteps[index] = { ...step, state: result.state, summary: result.summary };
+        if (!verifying && step.actionId !== "restore-point" && (result.state === "success" || result.state === "warning")) ranRepair = true;
+        if (step.actionId === "restore-point" && result.state !== "success") repairsOpen = false;
+        if (result.state === "requires_admin") repairsOpen = false;
+        if (verifying) {
+          const match = SCAN_STEPS.find((item) => item.actionId === step.actionId);
+          if (match) {
+            setFindings((current) => current?.map((item) => (item.actionId === step.actionId ? findingFromResult(match, result) : item)) ?? current);
+            setScanRows((current) => current.map((row) => (row.actionId === step.actionId ? { ...row, phase: "done", result } : row)));
+          }
+        }
+      }
+    } finally {
+      setJob({ title: "Recommended repair", steps: nextSteps });
+      setBusy(false);
+      const failed = nextSteps.filter((step) => step.state === "error" || step.state === "warning" || step.state === "requires_admin");
+      notify("Recommended repair", failed.length === 0 ? "Verification finished. Read each line before treating the PC as repaired." : "Repair finished with items that still need attention.");
     }
   }
 
@@ -484,16 +615,40 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
                   }}
                 />
               ) : section === "overview" ? (
-                <Overview
+                <FullScanScreen
                   profile={profile}
                   posture={posture.level}
-                  scanState={scanState}
                   busy={busy}
-                  job={job}
-                  expanded={expanded}
-                  onScan={() => void scan()}
-                  onSmart={askSmart}
+                  rows={scanRows}
+                  findings={findings}
+                  repairCount={repairChoices(findings ?? []).length}
+                  onScan={() => void fullScan()}
+                  onRepair={() => {
+                    const choices = repairChoices(findings ?? []);
+                    if (choices.length === 0) return;
+                    setFlow({ kind: "repairs", choices });
+                  }}
+                  onOpenSecurity={() => {
+                    setBusy(true);
+                    void runOne(
+                      { id: "open-security", section: "security", title: "Open Windows Security", summary: "Opens Windows Security.", risk: "safe", actionId: "open-security" },
+                      {},
+                    ).finally(() => setBusy(false));
+                  }}
+                  onFirewall={() =>
+                    begin({
+                      id: "firewall-enable",
+                      section: "security",
+                      title: "Enable firewall",
+                      summary: "Turns every firewall profile on.",
+                      risk: "high",
+                      acknowledge: true,
+                      confirm: "Enable every Windows firewall profile? This changes protection state. It does not reset custom rules.",
+                      actionId: "firewall-enable",
+                    })
+                  }
                   onDetails={(result, tool) => setFlow({ kind: "details", result, tool })}
+                  job={job}
                 />
               ) : section === "activity" ? (
                 <ActivityView
@@ -523,9 +678,35 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
           onScan={() => {
             finishWelcome();
             setSection("overview");
-            void scan();
+            void fullScan();
           }}
           onSkip={finishWelcome}
+        />
+      ) : null}
+      {flow?.kind === "repairs" ? (
+        <RepairDialog
+          choices={flow.choices}
+          onChange={(choices) => setFlow({ kind: "repairs", choices })}
+          onCancel={() => setFlow(null)}
+          onStart={() => {
+            if (profile.isWindows && settings.restoreBeforeRepair) {
+              setPendingRepairs(flow.choices);
+              setFlow({
+                kind: "restore",
+                tool: {
+                  id: "approved-repair",
+                  section: "optimize",
+                  title: "Recommended repair",
+                  summary: "",
+                  risk: "moderate",
+                  actionId: "restore-point",
+                },
+                params: { approved: "1" },
+              });
+              return;
+            }
+            void executeRepairs(flow.choices, false);
+          }}
         />
       ) : null}
       {flow?.kind === "confirm" ? (
@@ -545,10 +726,18 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         <RestoreDialog
           onCancel={() => setFlow(null)}
           onSkip={() => {
+            if (flow.params.approved === "1") {
+              void executeRepairs(pendingRepairs, false);
+              return;
+            }
             if (flow.params.smart) void smartRepair(false);
             else void continueWithoutRestore(flow.tool, flow.params);
           }}
           onCreate={() => {
+            if (flow.params.approved === "1") {
+              void executeRepairs(pendingRepairs, true);
+              return;
+            }
             if (flow.params.smart) void smartRepair(true);
             else void continueWithRestore(flow.tool, flow.params);
           }}
@@ -977,11 +1166,57 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint?: stri
   );
 }
 
+function RepairDialog({
+  choices,
+  onChange,
+  onCancel,
+  onStart,
+}: {
+  choices: RepairChoice[];
+  onChange: (choices: RepairChoice[]) => void;
+  onCancel: () => void;
+  onStart: () => void;
+}) {
+  const heavy = choices.some((item) => item.selected && (item.actionId === "dism-smart" || item.actionId === "sfc-smart"));
+  return (
+    <SimpleDialog
+      title="Repair recommended issues"
+      body={heavy ? "Image or system-file repair often takes 10–40 minutes. REcleaner does not show a percent." : "Only the checked items will run."}
+      onCancel={onCancel}
+    >
+      <ul className="mb-4 space-y-3 text-left">
+        {choices.map((item) => (
+          <li key={item.actionId}>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1 size-4 accent-current"
+                checked={item.selected}
+                onChange={(event) => onChange(choices.map((choice) => (choice.actionId === item.actionId ? { ...choice, selected: event.target.checked } : choice)))}
+              />
+              <span>
+                <span className="block">{item.title}</span>
+                <span className="mt-1 block text-xs leading-5 text-muted">{item.detail}</span>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="h-11 rounded-md bg-paper px-4 text-sm font-medium text-paper-fg disabled:opacity-40" disabled={!choices.some((item) => item.selected)} onClick={onStart}>
+        Start repair
+      </button>
+      <button type="button" className="h-11 px-3 text-sm text-muted" onClick={onCancel}>
+        Cancel
+      </button>
+    </SimpleDialog>
+  );
+}
+
 function Welcome({ onScan, onSkip }: { onScan: () => void; onSkip: () => void }) {
   return (
-    <SimpleDialog title="Welcome to REcleaner" body="Your Windows maintenance center. The first scan only reads the host." onCancel={onSkip}>
+    <SimpleDialog title="Welcome to REcleaner" body="Full system scan reads this PC. It does not repair anything until you approve a recommendation." onCancel={onSkip}>
       <button type="button" className="h-11 rounded-md bg-paper px-4 text-sm font-medium text-paper-fg" onClick={onScan}>
-        Scan system
+        Full system scan
       </button>
       <button type="button" className="h-11 px-3 text-sm text-muted" onClick={onSkip}>
         Skip

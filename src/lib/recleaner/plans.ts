@@ -52,7 +52,7 @@ export type Plan = {
   windowsOnly: boolean;
   admin: boolean;
   timeoutMs: number;
-  kind?: "host" | "dism" | "sfc" | "services" | "clean-temp" | "driver-scan" | "relaunch" | "edition" | "office-remove";
+  kind?: "host" | "dism" | "dism-check" | "sfc" | "sfc-verify" | "services" | "clean-temp" | "driver-scan" | "relaunch" | "edition" | "office-remove" | "probe";
   fields?: FieldKey[];
   optional?: FieldKey[];
   steps?: Step[];
@@ -687,6 +687,79 @@ export const OPENERS: [string, string, string][] = [
 ];
 
 for (const [id, title, target] of OPENERS) opener(id, title, target);
+
+function probe(id: string, title: string, notes: string[], extra?: { admin?: boolean; timeoutMs?: number }) {
+  add({
+    id,
+    title,
+    windowsOnly: true,
+    admin: extra?.admin ?? false,
+    timeoutMs: extra?.timeoutMs ?? 60000,
+    kind: "probe",
+    notes,
+  });
+}
+
+probe("win-info", "Windows version", ["Read Windows NT CurrentVersion. No changes."], { timeoutMs: 20000 });
+probe("wu-diagnose", "Windows Update diagnostic", ["Read update services, reboot-pending flags, and recent update-client errors. No reset."]);
+probe("defender-status", "Defender status", ["Get-MpComputerStatus. Does not change protection."]);
+probe("firewall-status", "Firewall status", ["netsh advfirewall show allprofiles state. Does not enable or reset the firewall."], { timeoutMs: 30000 });
+probe("disk-diagnose", "Disk diagnostic", ["Physical disk health, free space, and a measured size of temp files. Deletes nothing."], { timeoutMs: 180000 });
+probe("network-diagnose", "Network diagnostic", ["Adapter, gateway, DNS, and HTTPS to www.microsoft.com. Does not reset the stack."]);
+probe("winget-diagnose", "WinGet diagnostic", ["winget --version and winget source list. Does not install or remove packages."]);
+probe("events-diagnose", "Event diagnostic", ["Counts recent System and Application events. Caps each query at 200. Clears nothing."], { timeoutMs: 90000 });
+probe("bsod-diagnose", "Crash diagnostic", ["Minidump presence and one recent bugcheck event. Does not claim a cause."], { timeoutMs: 45000 });
+probe("wmi-diagnose", "WMI diagnostic", ["Win32_OperatingSystem and winmgmt /verifyrepository. Does not rebuild the repository."]);
+probe("shell-diagnose", "Shell diagnostic", ["Whether Explorer is running. Does not restart it."], { timeoutMs: 30000 });
+probe("startup-diagnose", "Startup diagnostic", ["Lists Win32_StartupCommand. Disables nothing."], { timeoutMs: 30000 });
+probe("wu-repair", "Windows Update repair", [
+  "Stops BITS, Windows Update, Cryptographic Services, and the installer service.",
+  "Renames SoftwareDistribution and catroot2. Does not delete them.",
+  "Starts the services again and checks that Windows Update and BITS are running.",
+], { admin: true, timeoutMs: 180000 });
+
+add({
+  id: "dism-check",
+  title: "Image diagnostic",
+  windowsOnly: true,
+  admin: true,
+  timeoutMs: 900000,
+  kind: "dism-check",
+  notes: [
+    "DISM /Online /Cleanup-Image /CheckHealth",
+    "Repair-WindowsImage -Online -CheckHealth",
+    "DISM /Online /Cleanup-Image /ScanHealth — only when CheckHealth is not conclusive",
+    "RestoreHealth is not started by this diagnostic",
+  ],
+});
+
+add({
+  id: "sfc-verify",
+  title: "System file diagnostic",
+  windowsOnly: true,
+  admin: true,
+  timeoutMs: 900000,
+  kind: "sfc-verify",
+  notes: ["sfc /verifyonly. sfc /scannow is not started by this diagnostic."],
+});
+
+add({
+  id: "open-security",
+  title: "Open Windows Security",
+  windowsOnly: true,
+  admin: false,
+  timeoutMs: 15000,
+  steps: [ps("Open Windows Security", "Start-Process windowsdefender:")],
+  notes: ["Opens Windows Security. Does not change protection settings."],
+});
+
+sequential("dns-flush", "Flush DNS", [
+  { label: "Flush DNS", file: "ipconfig.exe", args: ["/flushdns"] },
+], { admin: false, timeoutMs: 20000, notes: ["ipconfig /flushdns. Does not reset Winsock or TCP/IP."] });
+
+sequential("firewall-enable", "Enable firewall", [
+  { label: "Enable all profiles", file: "netsh.exe", args: ["advfirewall", "set", "allprofiles", "state", "on"] },
+], { notes: ["Turns every firewall profile on. Does not reset firewall rules."] });
 
 sequential("user-add", "Create account", [
   { label: "Create user", file: "net.exe", args: ["user", "{{user}}", "{{password}}", "/add"] },

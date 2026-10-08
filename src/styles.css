@@ -66,6 +66,25 @@ html[data-theme="light"] {
   animation: rec-drift 90s linear infinite;
 }
 
+.core-live .core-drift {
+  animation-duration: 24s;
+}
+
+.core-square {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.core-live .core-square {
+  animation: rec-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
 .app-drag {
   -webkit-app-region: drag;
 }
@@ -75,7 +94,8 @@ html[data-theme="light"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .core-drift {
+  .core-drift,
+  .core-live .core-square {
     animation: none;
   }
 }

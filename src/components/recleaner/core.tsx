@@ -1,9 +1,9 @@
 import { cn } from "@/lib/cn";
 
-export function SystemCore({ level }: { level: "steady" | "watch" | "strained" }) {
+export function SystemCore({ level, live = false }: { level: "steady" | "watch" | "strained"; live?: boolean }) {
   const tone = level === "strained" ? "text-danger" : level === "watch" ? "text-warn" : "text-core";
   return (
-    <div className={cn("relative size-52 sm:size-60", tone)} aria-hidden="true">
+    <div className={cn("relative size-52 sm:size-60", tone, live && "core-live")} aria-hidden="true">
       <svg viewBox="0 0 200 200" className="size-full">
         <rect x="22" y="22" width="156" height="156" rx="36" fill="none" stroke="currentColor" strokeOpacity="0.16" strokeWidth="1.25" />
         <g className="core-drift">
@@ -26,7 +26,7 @@ export function SystemCore({ level }: { level: "steady" | "watch" | "strained" }
             />
           </g>
         </g>
-        <rect x="88" y="88" width="24" height="24" rx="4.5" fill="currentColor" />
+        <rect x="88" y="88" width="24" height="24" rx="4.5" className="core-square" fill="currentColor" />
       </svg>
     </div>
   );
