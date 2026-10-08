@@ -41,7 +41,7 @@ import { SystemCore } from "./core";
 import { Mark, Wordmark } from "./mark";
 import { isDesktop } from "@/lib/recleaner/desktop";
 import { FullScanScreen, type ScanRow } from "./full-scan";
-import { SCAN_STEPS, findingFromResult, healthScore, recommendRestore, repairChoices, verifySteps, type Finding, type RepairChoice } from "@/lib/recleaner/health";
+import { SCAN_STEPS, failureFinding, findingFromResult, repairChoices, scoreForScan, verifySteps, type Finding, type RepairChoice } from "@/lib/recleaner/health";
 import { buildScanReport } from "@/lib/recleaner/scan/report";
 import { statusLabel } from "@/lib/recleaner/scan/score";
 
@@ -134,7 +134,9 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [scanStarted, setScanStarted] = useState<number | null>(null);
   const [beforeScore, setBeforeScore] = useState<number | null>(null);
+  const [scanIncomplete, setScanIncomplete] = useState(false);
   const cancelScan = useRef(false);
+  const cancelRepair = useRef(false);
 
   useEffect(() => {
     hydrate();
@@ -240,6 +242,7 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     if (busy) return;
     cancelScan.current = false;
     setScanNote(null);
+    setScanIncomplete(false);
     const started = new Date();
     setScanStarted(started.getTime());
     setBeforeScore(null);
@@ -276,17 +279,26 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         const slow = step.actionId === "dism-check" || step.actionId === "sfc-verify";
         rows[index] = { ...step, phase: "running" };
         setScanRows([...rows]);
-        const result = await runOne(
-          {
-            id: `scan-${step.id}`,
-            section: "optimize",
-            title: step.label,
-            summary: "Full system scan",
-            risk: "safe",
-            actionId: step.actionId,
-          },
-          {},
-        );
+        let result: ServerResult;
+        try {
+          result = await runOne(
+            {
+              id: `scan-${step.id}`,
+              section: "optimize",
+              title: step.label,
+              summary: "Full system scan",
+              risk: "safe",
+              actionId: step.actionId,
+            },
+            {},
+          );
+        } catch {
+          rows[index] = { ...step, phase: "done" };
+          nextFindings.push(failureFinding(step));
+          setScanRows([...rows]);
+          setFindings([...nextFindings]);
+          continue;
+        }
         if (step.actionId === "host-read") {
           try {
             setProfile(await refresh());
@@ -303,6 +315,7 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
       const finished = new Date().toISOString();
       const windows = nextFindings.find((item) => item.id === "windows");
       const choices = repairChoices(nextFindings);
+      const score = scoreForScan(nextFindings, cancelled);
       const report = buildScanReport({
         startedAt: started.toISOString(),
         finishedAt: finished,
@@ -313,7 +326,6 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         recommendations: choices,
         cancelled,
       });
-      const score = healthScore(nextFindings);
       record("full-scan", "Full system scan", {
         actionId: "full-scan",
         title: "Full system scan",
@@ -331,6 +343,7 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         isWindows: profile.isWindows,
       });
       setScanState(cancelled ? "cancelled" : score.score == null ? "unavailable" : "success");
+      setScanIncomplete(cancelled);
     } finally {
       setBusy(false);
       setScanNote(null);
@@ -341,7 +354,8 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     const selected = choices.filter((item) => item.selected);
     setFlow(null);
     if (selected.length === 0) return;
-    setBeforeScore(healthScore(findings ?? []).score);
+    cancelRepair.current = false;
+    setBeforeScore(scoreForScan(findings ?? [], false).score);
     const planned: JobStep[] = [];
     if (withRestore && profile.isWindows) planned.push({ label: "Restore point", actionId: "restore-point", state: "waiting" });
     for (const item of selected) planned.push({ label: item.title, actionId: item.actionId, state: "waiting" });
@@ -369,6 +383,10 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         }
         if (!profile.isWindows && step.actionId !== "host-read") {
           nextSteps[index] = { ...step, state: "blocked", summary: "Windows required. Not started." };
+          continue;
+        }
+        if (cancelRepair.current && !verifying) {
+          nextSteps[index] = { ...step, state: "cancelled", summary: "Not started. Repair was cancelled." };
           continue;
         }
         nextSteps[index] = { ...step, state: "running" };
@@ -400,7 +418,15 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
       setJob({ title: "Recommended repair", steps: nextSteps });
       setBusy(false);
       const failed = nextSteps.filter((step) => step.state === "error" || step.state === "warning" || step.state === "requires_admin");
-      notify("Recommended repair", failed.length === 0 ? "Verification finished. Read each line before treating the PC as repaired." : "Repair finished with items that still need attention.");
+      const cancelledRepair = nextSteps.some((step) => step.state === "cancelled");
+      notify(
+        "Recommended repair",
+        cancelledRepair
+          ? "Repair was cancelled. Completed steps were kept and verified where a repair had already run."
+          : failed.length === 0
+            ? "Verification finished. Read each line before treating the PC as repaired."
+            : "Repair finished with items that still need attention.",
+      );
     }
   }
 
@@ -677,7 +703,7 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
                     setFlow({
                       kind: "repairs",
                       choices,
-                      restore: profile.isWindows && settings.restoreBeforeRepair && recommendRestore(findings ?? []),
+                      restore: false,
                     });
                   }}
                   onOpenSecurity={() => {
@@ -704,9 +730,14 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
                   scanNote={scanNote}
                   scanStarted={scanStarted}
                   beforeScore={beforeScore}
+                  scanIncomplete={scanIncomplete}
                   onCancelScan={() => {
                     cancelScan.current = true;
                     setScanNote("Stopping after the current check. DISM and system file verification are not interrupted.");
+                  }}
+                  onCancelRepair={() => {
+                    cancelRepair.current = true;
+                    setScanNote("Stopping after the current repair. DISM and SFC are not interrupted.");
                   }}
                 />
               ) : section === "activity" ? (

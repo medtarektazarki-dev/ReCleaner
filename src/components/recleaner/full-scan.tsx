@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatDuration, formatGiB, formatStamp, formatUptime, platformLabel } from "@/lib/recleaner/format";
-import { gradeLabel, healthScore, type Finding, type Grade } from "@/lib/recleaner/health";
+import { gradeLabel, scoreForScan, type Finding, type Grade } from "@/lib/recleaner/health";
 import { statusLabel } from "@/lib/recleaner/scan/score";
 import type { HostProfile, ServerResult } from "@/lib/recleaner/types";
 import { SystemCore } from "./core";
@@ -44,7 +44,9 @@ export function FullScanScreen({
   scanNote,
   scanStarted,
   beforeScore,
+  scanIncomplete,
   onCancelScan,
+  onCancelRepair,
 }: {
   profile: HostProfile;
   posture: "steady" | "watch" | "strained";
@@ -61,11 +63,13 @@ export function FullScanScreen({
   scanNote: string | null;
   scanStarted: number | null;
   beforeScore: number | null;
+  scanIncomplete: boolean;
   onCancelScan: () => void;
+  onCancelRepair: () => void;
 }) {
   const [math, setMath] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const scored = findings ? healthScore(findings) : null;
+  const scored = findings ? scoreForScan(findings, scanIncomplete) : null;
   const scanning = busy && rows.some((row) => row.phase !== "done");
   useEffect(() => {
     if (!scanning) return;
@@ -100,7 +104,8 @@ export function FullScanScreen({
         ) : findings && scored ? (
           <>
             <h1 className="mt-3 text-5xl font-medium tracking-tight tabular-nums">{scored.score == null ? "—" : scored.score}</h1>
-            <p className="mt-2 text-sm text-muted">{statusLabel(scored.status)}</p>
+            <p className="mt-2 text-sm text-muted">{scanIncomplete ? "Not scored" : statusLabel(scored.status)}</p>
+            {scanIncomplete ? <p className="mt-1 max-w-md text-xs text-subtle">The scan was cancelled. Finished checks stay listed. No overall score is shown.</p> : null}
             {beforeScore != null && scored.score != null ? <p className="mt-1 text-xs text-subtle">Before {beforeScore}</p> : null}
           </>
         ) : (
@@ -121,6 +126,11 @@ export function FullScanScreen({
           {scanning ? (
             <button type="button" className="h-11 rounded-md border border-line px-4 text-sm font-medium" onClick={onCancelScan}>
               Cancel scan
+            </button>
+          ) : null}
+          {job && busy && !scanning ? (
+            <button type="button" className="h-11 rounded-md border border-line px-4 text-sm font-medium" onClick={onCancelRepair}>
+              Cancel remaining repairs
             </button>
           ) : null}
           {findings && !scanning ? (

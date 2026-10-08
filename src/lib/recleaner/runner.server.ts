@@ -1,6 +1,7 @@
 import type { HostProfile, ServerResult } from "./types";
 import { PROBE_SCRIPT } from "./diagnostics";
 import { classifyDism, classifySfc, type Grade } from "./health";
+import { redact } from "./redact";
 import {
   EDITIONS,
   applyTokens,
@@ -15,6 +16,8 @@ type RunOut = { code: number | null; output: string; timedOut: boolean; error?: 
 
 async function runProcess(file: string, args: string[], timeoutMs: number): Promise<RunOut> {
   const { spawn } = await import("node:child_process");
+  const name = file.split(/[/\\]/).pop()?.toLowerCase() ?? "";
+  const durable = name === "dism.exe" || name === "sfc.exe";
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: RunOut) => {
@@ -23,6 +26,7 @@ async function runProcess(file: string, args: string[], timeoutMs: number): Prom
       resolve(value);
     };
     let output = "";
+    let overdue = false;
     const child = spawn(file, args, { windowsHide: true, shell: false });
     const append = (chunk: Buffer | string) => {
       output += typeof chunk === "string" ? chunk : chunk.toString("utf8");
@@ -31,6 +35,10 @@ async function runProcess(file: string, args: string[], timeoutMs: number): Prom
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
     const timer = setTimeout(() => {
+      if (durable) {
+        overdue = true;
+        return;
+      }
       child.kill();
       finish({
         code: null,
@@ -44,15 +52,14 @@ async function runProcess(file: string, args: string[], timeoutMs: number): Prom
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      finish({ code, output, timedOut: false });
+      const note = overdue ? "\nThe operation ran longer than expected and was not stopped." : "";
+      finish({ code, output: output + note, timedOut: false });
     });
   });
 }
 
 function scrub(text: string, keepKeys: boolean): string {
-  const cut = text.slice(0, 24000);
-  if (keepKeys) return cut;
-  return cut.replace(/[A-Za-z0-9]{5}(?:-[A-Za-z0-9]{5}){4}/g, "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX");
+  return redact(text, keepKeys);
 }
 
 function baseResult(
@@ -130,8 +137,8 @@ const DISM_HEALTH =
   "$r = Repair-WindowsImage -Online -CheckHealth -ErrorAction SilentlyContinue; if ($r) { $r.ImageHealthState }";
 
 async function runDism(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
-  const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth"], 180000);
-  const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth"], 600000);
+  const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth", "/English"], 180000);
+  const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 600000);
   const health = await runProcess("powershell.exe", ["-NoProfile", "-Command", DISM_HEALTH], 120000);
   const state = health.output.trim();
   let output = [check.output, scan.output, state].filter(Boolean).join("\n");
@@ -147,7 +154,7 @@ async function runDism(plan: Plan, started: number, isWindows: boolean): Promise
     });
   }
   if (/Repairable/i.test(state)) {
-    const restore = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/RestoreHealth"], 900000);
+    const restore = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/RestoreHealth", "/English"], 900000);
     output += `\n${restore.output}`;
     if (restore.code === 0) {
       return baseResult(plan, "success", "Component store corruption was repaired.", {
@@ -191,29 +198,24 @@ async function runSfc(plan: Plan, started: number, isWindows: boolean): Promise<
       exitCode: null,
     });
   }
-  if (/did not find any integrity violations/i.test(text)) {
-    return baseResult(plan, "success", "No integrity violations were detected. SFC repair was not started.", {
+  const verdict = classifySfc(text, verify.code);
+  if (!verdict.repairId) {
+    return baseResult(plan, verdict.grade === "healthy" ? "success" : "warning", verdict.summary, {
       started,
       isWindows,
       output: text,
       exitCode: verify.code,
     });
   }
-  if (/found integrity violations/i.test(text)) {
-    const scan = await runProcess("sfc.exe", ["/scannow"], 1200000);
-    const output = `${text}\n${scan.output}`;
-    return baseResult(plan, scan.code === 0 ? "success" : "warning", "Integrity violations were reported. SFC repair finished — read the result.", {
-      started,
-      isWindows,
-      output,
-      exitCode: scan.code,
-    });
-  }
-  return baseResult(plan, "warning", "The verification result was not clear. SFC repair was not started.", {
+  const scan = await runProcess("sfc.exe", ["/scannow"], 1200000);
+  const output = `${text}\n${scan.output}`;
+  const repaired = classifySfc(scan.output, scan.code);
+  const clear = repaired.grade === "healthy" || scan.code === 0;
+  return baseResult(plan, clear ? "success" : "warning", clear ? "SFC repair finished. Read the verification." : "SFC repair did not complete cleanly.", {
     started,
     isWindows,
-    output: text,
-    exitCode: verify.code,
+    output,
+    exitCode: scan.code,
   });
 }
 
@@ -234,7 +236,7 @@ function graded(
 }
 
 async function runDismCheck(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
-  const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth"], 180000);
+  const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth", "/English"], 180000);
   const health = await runProcess("powershell.exe", ["-NoProfile", "-Command", DISM_HEALTH], 120000);
   if (check.error) {
     return graded(plan, "unknown", "DISM could not be started. No repair was started.", undefined, check.error, started, isWindows, null);
@@ -242,7 +244,7 @@ async function runDismCheck(plan: Plan, started: number, isWindows: boolean): Pr
   let raw = [check.output, health.output].filter(Boolean).join("\n");
   let verdict = classifyDism({ check: check.output, imageState: health.output, scan: null });
   if (verdict.needsScan) {
-    const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth"], 700000);
+    const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 700000);
     raw = `${raw}\n${scan.output}`;
     if (scan.error) {
       return graded(plan, "unknown", "ScanHealth could not be started. RestoreHealth was not started.", undefined, raw, started, isWindows, null);
@@ -257,7 +259,7 @@ async function runSfcVerify(plan: Plan, started: number, isWindows: boolean): Pr
   if (verify.error) {
     return graded(plan, "unknown", "System file checker could not be started. Repair was not started.", undefined, verify.error, started, isWindows, null);
   }
-  const verdict = classifySfc(verify.output);
+  const verdict = classifySfc(verify.output, verify.code);
   return graded(plan, verdict.grade, verdict.summary, verdict.repairId, verify.output, started, isWindows, verify.code);
 }
 
@@ -297,13 +299,13 @@ foreach ($n in $names) {
   $s = Get-CimInstance Win32_Service -Filter ('Name=''' + $n + '''') -ErrorAction SilentlyContinue
   if (-not $s) { Write-Output ($n + '  missing'); $warn++; continue }
   $flag = 'OK'
-  if ($s.State -eq 'Stopped' -and $s.StartMode -eq 'Auto') { $flag = 'ATTENTION'; $warn++ }
+  if ($s.State -eq 'Stopped' -and ($s.StartMode -eq 'Auto' -or $s.StartMode -eq 'Automatic')) { $flag = 'ATTENTION'; $warn++ }
   Write-Output ($n + '  ' + $s.State + '  ' + $s.StartMode + '  ' + $flag)
 }
 Write-Output ('ATTENTION_COUNT=' + $warn)
 if ($warn -gt 0) {
   'GRADE=attention'
-  'SUMMARY=One or more automatic services need attention. Nothing was changed.'
+  'SUMMARY=Stopped automatic service. Nothing was changed.'
 } else {
   'GRADE=healthy'
   'SUMMARY=Checked services are running, or they are not set to start automatically. Nothing was changed.'

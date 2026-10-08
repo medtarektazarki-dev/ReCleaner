@@ -58,9 +58,9 @@ export function gradeOf(value: string | undefined): Grade {
   return "unknown";
 }
 
-export function classifySfc(text: string): { grade: Grade; summary: string; repairId?: string } {
-  if (/did not find any integrity violations/i.test(text)) {
-    return { grade: "healthy", summary: "Protected system files reported no integrity violations. Repair was not started." };
+export function classifySfc(text: string, exitCode?: number | null): { grade: Grade; summary: string; repairId?: string } {
+  if (/successfully repaired/i.test(text) || /did not find any integrity violations/i.test(text)) {
+    return { grade: "healthy", summary: "Protected system files reported no remaining integrity violations. Repair was not started." };
   }
   if (/found integrity violations/i.test(text)) {
     return {
@@ -69,7 +69,36 @@ export function classifySfc(text: string): { grade: Grade; summary: string; repa
       repairId: "sfc-smart",
     };
   }
+  if (exitCode === 0) {
+    return { grade: "healthy", summary: "System file verification returned exit code 0. Repair was not started." };
+  }
+  if (exitCode === 1) {
+    return {
+      grade: "warning",
+      summary: "System file verification returned exit code 1. sfc /scannow was not started.",
+      repairId: "sfc-smart",
+    };
+  }
   return { grade: "unknown", summary: "The verification result was not clear. Repair was not started." };
+}
+
+export function serviceNeedsAttention(state: string, startMode: string): boolean {
+  return /^stopped$/i.test(state) && /^(auto|automatic)$/i.test(startMode);
+}
+
+export function failureFinding(step: { id: string; label: string; actionId: string }): Finding {
+  return {
+    ...step,
+    grade: "unknown",
+    summary: "This check failed. The scan continued.",
+    marks: {},
+  };
+}
+
+export function scoreForScan(findings: Finding[], cancelled: boolean): ReturnType<typeof healthScore> {
+  const scored = healthScore(findings);
+  if (!cancelled) return scored;
+  return { ...scored, score: null, status: "unknown" };
 }
 
 export function classifyDism(input: { check: string; imageState: string; scan: string | null }): {

@@ -80,10 +80,15 @@ try {
 `.trim(),
 
   "firewall-status": `
-$out = netsh advfirewall show allprofiles state | Out-String
-$out
-$on = ([regex]::Matches($out, 'State\\s+ON')).Count
-$off = ([regex]::Matches($out, 'State\\s+OFF')).Count
+$profiles = @(Get-NetFirewallProfile -ErrorAction SilentlyContinue)
+if ($profiles.Count -eq 0) {
+  "GRADE=unknown"
+  "SUMMARY=Firewall state could not be read. Nothing was changed."
+  exit 0
+}
+$on = @($profiles | Where-Object { $_.Enabled -eq $true }).Count
+$off = @($profiles | Where-Object { $_.Enabled -eq $false }).Count
+foreach ($profile in $profiles) { "PROFILE=$($profile.Name)|$($profile.Enabled)" }
 "ON=$on"
 "OFF=$off"
 if ($on -ge 1 -and $off -eq 0) {
@@ -120,25 +125,31 @@ $temp = (Measure-Tree "$env:SystemRoot\\Temp") + (Measure-Tree $env:TEMP) + (Mea
 if (Test-Path -LiteralPath "$env:SystemRoot\\Windows.old") { "WINDOWS_OLD=yes" } else { "WINDOWS_OLD=no" }
 $updateCache = Measure-Tree "$env:SystemRoot\\SoftwareDistribution\\Download"
 "UPDATE_CACHE_BYTES=$updateCache"
-$bad = 0
+$unhealthy = 0
+$warned = 0
 try {
   $disks = @(Get-PhysicalDisk -ErrorAction Stop)
   foreach ($disk in $disks) {
-    "DISK=$($disk.FriendlyName)|$($disk.HealthStatus)|$($disk.OperationalStatus)"
-    if ($disk.HealthStatus -and [string]$disk.HealthStatus -ne 'Healthy') { $bad++ }
+    $health = [string]$disk.HealthStatus
+    "DISK=$($disk.FriendlyName)|$health|$($disk.OperationalStatus)"
+    if ($health -eq 'Unhealthy') { $unhealthy++ }
+    elseif ($health -eq 'Warning') { $warned++ }
   }
-  "DISK_BAD=$bad"
+  "DISK_BAD=$unhealthy"
+  "DISK_WARN=$warned"
 } catch {
   "DISK_BAD=unknown"
   "DETAIL=$($_.Exception.Message)"
 }
 $low = ($cap -gt 0 -and (($free / $cap) -lt 0.10))
-if ($bad -gt 0) {
+if ($unhealthy -gt 0) {
   "GRADE=critical"
-  "SUMMARY=A physical disk did not report Healthy. Nothing was deleted."
-} elseif ($low) {
+  "SUMMARY=A physical disk reported Unhealthy. Nothing was deleted."
+} elseif ($warned -gt 0 -or $low) {
   "GRADE=warning"
-  "SUMMARY=Free space on $letter is under 10 percent. Nothing was deleted."
+  if ($warned -gt 0 -and $low) { "SUMMARY=A disk reported Warning and free space is under 10 percent. Nothing was deleted." }
+  elseif ($warned -gt 0) { "SUMMARY=A physical disk reported Warning. Nothing was deleted." }
+  else { "SUMMARY=Free space on $letter is under 10 percent. Nothing was deleted." }
   if ($temp -ge 209715200) { "REPAIR=clean-temp" }
 } elseif ($temp -ge 209715200) {
   "GRADE=attention"
@@ -189,11 +200,14 @@ if ($up.Count -eq 0) {
 `.trim(),
 
   "winget-diagnose": `
-$version = & winget --version 2>&1 | Out-String
-"VERSION=$($version.Trim())"
-if (-not $version.Trim()) {
-  "GRADE=attention"
-  "SUMMARY=WinGet did not return a version. Packages were not changed."
+$version = ''
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+  $version = (& winget --version 2>&1 | Out-String).Trim()
+}
+"VERSION=$version"
+if (-not $version) {
+  "GRADE=unknown"
+  "SUMMARY=WinGet is not available. Packages were not changed."
   exit 0
 }
 $sources = & winget source list 2>&1 | Out-String
@@ -253,8 +267,7 @@ $event = Get-WinEvent -FilterHashtable @{ LogName='System'; Id=1001; StartTime=(
 if ($event) {
   "BUGCHECK_TIME=$($event.TimeCreated.ToString('o'))"
   $text = [string]$event.Message
-  if ($text.Length -gt 360) { $text = $text.Substring(0, 360) }
-  "BUGCHECK=$($text -replace '\\r?\\n',' ')"
+  if ($text -match '0x[0-9A-Fa-f]{8}') { "BUGCHECK_CODE=$($Matches[0])" }
 }
 if ($dumps.Count -gt 0 -or $event) {
   "GRADE=attention"
@@ -269,15 +282,15 @@ if ($dumps.Count -gt 0 -or $event) {
 try {
   $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
   "CAPTION=$($os.Caption)"
-  $verify = & winmgmt.exe /verifyrepository 2>&1 | Out-String
-  "VERIFY=$($verify.Trim())"
-  if ($verify -match 'consistent') {
-    "GRADE=healthy"
-    "SUMMARY=CIM responded and the WMI repository reported consistent. It was not rebuilt."
-  } else {
-    "GRADE=attention"
-    "SUMMARY=WMI verification was not clearly consistent. The repository was not rebuilt."
-  }
+  $proc = Start-Process -FilePath winmgmt.exe -ArgumentList '/verifyrepository' -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+"VERIFY_EXIT=$($proc.ExitCode)"
+if ($proc -and $proc.ExitCode -eq 0) {
+  "GRADE=healthy"
+  "SUMMARY=CIM responded and WMI repository verification returned exit code 0. It was not rebuilt."
+} else {
+  "GRADE=attention"
+  "SUMMARY=WMI verification did not return exit code 0. The repository was not rebuilt."
+}
 } catch {
   "GRADE=warning"
   "SUMMARY=A CIM query failed. The WMI repository was not rebuilt."
