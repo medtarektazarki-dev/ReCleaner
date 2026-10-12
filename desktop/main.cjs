@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, Notification, Tray, Menu, nativeImage } = r
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { executeAction, readHost } = require("./runner.cjs");
 
 process.env.RECLEANER_EXE = process.execPath;
@@ -9,6 +10,23 @@ process.env.RECLEANER_EXE = process.execPath;
 let allowClose = false;
 let win = null;
 let tray = null;
+
+function trustedUiUrl() {
+  return pathToFileURL(path.join(__dirname, "ui", "index.html")).href;
+}
+
+function assertTrustedSender(event) {
+  if (
+    !win ||
+    win.isDestroyed() ||
+    event.sender !== win.webContents ||
+    event.senderFrame !== win.webContents.mainFrame ||
+    event.senderFrame.url !== trustedUiUrl()
+  ) {
+    throw new Error("Rejected IPC request from an untrusted renderer frame.");
+  }
+}
+
 let settings = {
   launchWithWindows: false,
   runMinimized: false,
@@ -91,7 +109,7 @@ function createWindow() {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith("file:")) return;
+    if (url === trustedUiUrl()) return;
     event.preventDefault();
   });
   void win.loadFile(path.join(__dirname, "ui", "index.html"));
@@ -151,14 +169,19 @@ app.on("window-all-closed", () => {
   if (allowClose) app.quit();
 });
 
-ipcMain.handle("host", () => readHost());
+ipcMain.handle("host", (event) => {
+  assertTrustedSender(event);
+  return readHost();
+});
 
-ipcMain.handle("run", async (_event, actionId, params) => {
+ipcMain.handle("run", async (event, actionId, params) => {
+  assertTrustedSender(event);
   const id = typeof actionId === "string" ? actionId : "";
   return executeAction(id, cleanParams(params));
 });
 
-ipcMain.handle("settings", (_event, next) => {
+ipcMain.handle("settings", (event, next) => {
+  assertTrustedSender(event);
   if (!next || typeof next !== "object") return;
   saveSettings({
     launchWithWindows: Boolean(next.launchWithWindows),
@@ -168,7 +191,8 @@ ipcMain.handle("settings", (_event, next) => {
   applyStartup(Boolean(settings.launchWithWindows));
 });
 
-ipcMain.handle("notify", (_event, title, body) => {
+ipcMain.handle("notify", (event, title, body) => {
+  assertTrustedSender(event);
   if (!settings.notifications || !Notification.isSupported()) return;
   new Notification({
     title: String(title || "REcleaner").slice(0, 80),
@@ -176,7 +200,8 @@ ipcMain.handle("notify", (_event, title, body) => {
   }).show();
 });
 
-ipcMain.handle("window", (_event, command) => {
+ipcMain.handle("window", (event, command) => {
+  assertTrustedSender(event);
   if (!win || win.isDestroyed()) return;
   if (command === "minimize") win.minimize();
   if (command === "maximize") {
