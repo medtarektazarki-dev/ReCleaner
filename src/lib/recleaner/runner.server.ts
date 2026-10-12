@@ -142,7 +142,7 @@ async function runDism(plan: Plan, started: number, isWindows: boolean): Promise
   let verdict = classifyDism({ check: check.output, imageState: "", scan: null });
   if (verdict.needsScan || verdict.repairId === "dism-smart") {
     const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 700000);
-    output = `${output}\\n${scan.output}`.trim();
+    output = `${output}\n${scan.output}`.trim();
     if (scan.error || scan.timedOut || scan.code !== 0) {
       return baseResult(plan, "warning", "DISM ScanHealth did not complete cleanly. RestoreHealth was not started.", { started, isWindows, output: output || scan.error || "No usable ScanHealth result.", exitCode: scan.code });
     }
@@ -156,7 +156,7 @@ async function runDism(plan: Plan, started: number, isWindows: boolean): Promise
     return baseResult(plan, "warning", verdict.summary, { started, isWindows, output, exitCode: null });
   }
   const restore = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/RestoreHealth", "/English"], 900000);
-  output = `${output}\\n${restore.output}`.trim();
+  output = `${output}\n${restore.output}`.trim();
   if (restore.error || restore.timedOut || restore.code !== 0) {
     return baseResult(plan, "error", "RestoreHealth did not complete cleanly. Review output and scan again before retrying.", { started, isWindows, output: output || restore.error || "No usable RestoreHealth result.", exitCode: restore.code });
   }
@@ -173,7 +173,7 @@ async function runSfc(plan: Plan, started: number, isWindows: boolean): Promise<
     return baseResult(plan, verdict.grade === "healthy" ? "success" : "warning", verdict.summary, { started, isWindows, output: verify.output, exitCode: verify.code });
   }
   const scan = await runProcess("sfc.exe", ["/scannow"], 1200000);
-  const output = `${verify.output}\\n${scan.output}`;
+  const output = `${verify.output}\n${scan.output}`;
   if (scan.error || scan.timedOut || scan.code !== 0) {
     return baseResult(plan, "warning", "SFC repair did not complete cleanly. The system is not being reported as repaired.", { started, isWindows, output: output || scan.error || "No usable SFC repair result.", exitCode: scan.code });
   }
@@ -209,7 +209,7 @@ async function runDismCheck(plan: Plan, started: number, isWindows: boolean): Pr
   let verdict = classifyDism({ check: check.output, imageState: "", scan: null });
   if (verdict.needsScan) {
     const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 700000);
-    raw = `${raw}\\n${scan.output}`.trim();
+    raw = `${raw}\n${scan.output}`.trim();
     if (scan.error || scan.timedOut || scan.code !== 0) {
       return graded(plan, "unknown", "ScanHealth did not complete cleanly. The image state remains unknown.", undefined, raw || scan.error || "", started, isWindows, scan.code);
     }
