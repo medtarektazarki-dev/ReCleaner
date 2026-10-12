@@ -56,6 +56,15 @@ The packaging script downloads the Electron Windows x64 runtime and produces:
 
 The build also stages files under **/tmp/recleaner-stage**. Generated binaries and build folders are ignored by Git and should not be committed.
 
+## Continuous integration
+
+Two workflows have separate responsibilities:
+
+- [Quality Checks](../.github/workflows/quality.yml) runs TypeScript checks, the test suite, and lint on relevant pushes and pull requests.
+- [Build REcleaner for Windows](../.github/workflows/build-windows.yml) packages and verifies the Windows x64 installer and portable ZIP.
+
+Review both statuses before treating a change as ready. A green packaging run does not imply that the Quality Checks workflow passed; a green quality run does not prove the binary works on every Windows machine.
+
 ## GitHub Actions build
 
 Workflow: [Build REcleaner for Windows](../.github/workflows/build-windows.yml).
