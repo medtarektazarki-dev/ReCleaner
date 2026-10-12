@@ -66,8 +66,7 @@ export function classifySfc(
     return { grade: "warning", summary: "Integrity violations were reported. Review the verification before assuming the repair worked.", repairId: "sfc-smart" };
   }
   if (exitCode !== undefined && exitCode !== null && exitCode !== 0) {
-    if (exitCode === 1) return { grade: "warning", summary: "System file verification returned exit code 1. sfc /scannow was not started.", repairId: "sfc-smart" };
-    return { grade: "unknown", summary: "System File Checker returned a failure exit code. The result was not treated as healthy." };
+    return { grade: "unknown", summary: "System File Checker returned a non-zero exit code without a recognized integrity result. No repair was recommended." };
   }
   if (/successfully repaired/i.test(text) || /did not find any integrity violations/i.test(text)) {
     return { grade: "healthy", summary: "System File Checker reported no remaining integrity violations." };

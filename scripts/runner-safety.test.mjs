@@ -47,3 +47,10 @@ test("administrator detection checks the Windows principal token", () => {
   assert.match(source, /WindowsIdentity/);
   assert.doesNotMatch(source, /runProcess\("net\.exe", \["session"\]/);
 });
+
+ 
+test("recommended repair halts unstarted repairs after a non-success result", () => {
+  const app = readFileSync(new URL("../src/components/recleaner/app.tsx", import.meta.url), "utf8");
+  assert.match(app, /if \(!verifying && step\.actionId !== "restore-point" && result\.state !== "success"\) repairsOpen = false/);
+  assert.match(app, /if \(verifying && !ranRepair\)/);
+});

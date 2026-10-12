@@ -110,7 +110,8 @@ test("verification runs the diagnostic again and DISM is verified before SFC", (
 test("sfc and dism classification do not recommend a repair for a healthy result", () => {
   assert.equal(classifySfc("Windows Resource Protection did not find any integrity violations.").repairId, undefined);
   assert.equal(classifySfc("", 0).repairId, undefined);
-  assert.equal(classifySfc("", 1).repairId, "sfc-smart");
+  assert.equal(classifySfc("", 1).grade, "unknown");
+  assert.equal(classifySfc("", 1).repairId, undefined);
   assert.equal(classifySfc("localized output", 2).grade, "unknown");
   assert.equal(classifyDism({ check: "", imageState: "Healthy", scan: null }).repairId, undefined);
   assert.equal(classifyDism({ check: "The component store is repairable.", imageState: "", scan: null }).repairId, "dism-smart");

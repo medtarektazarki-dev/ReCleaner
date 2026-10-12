@@ -332,9 +332,13 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
           {},
         );
         nextSteps[index] = { ...step, state: result.state, summary: result.summary };
-        if (!verifying && step.actionId !== "restore-point" && (result.state === "success" || result.state === "warning")) ranRepair = true;
+        const repairDidNotStart =
+          result.state === "unavailable" ||
+          result.state === "requires_admin" ||
+          result.state === "cancelled";
+        if (!verifying && step.actionId !== "restore-point" && !repairDidNotStart) ranRepair = true;
         if (step.actionId === "restore-point" && result.state !== "success") repairsOpen = false;
-        if (result.state === "requires_admin") repairsOpen = false;
+        if (!verifying && step.actionId !== "restore-point" && result.state !== "success") repairsOpen = false;
         if (verifying) {
           const match = SCAN_STEPS.find((item) => item.actionId === step.actionId);
           if (match) {

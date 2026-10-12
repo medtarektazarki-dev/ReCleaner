@@ -96,3 +96,10 @@ test("DISM ScanHealth evidence overrides a stale CheckHealth result", () => {
   assert.equal(scanUnclear.grade, "unknown");
   assert.equal(scanUnclear.repairId, undefined);
 });
+
+ 
+test("SFC does not recommend a repair from a non-zero exit code alone", () => {
+  const failed = classifySfc("", 1);
+  assert.equal(failed.grade, "unknown");
+  assert.equal(failed.repairId, undefined);
+});
