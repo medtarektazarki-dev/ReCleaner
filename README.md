@@ -20,12 +20,11 @@ REcleaner v1.0.0 is a Windows maintenance application. It checks the PC, repairs
 
 ## Downloading a Windows build
 
-1. Open [GitHub Actions](https://github.com/medtarektazarki-dev/ReCleaner/actions).
-2. Open a successful **Build REcleaner for Windows** run tied to the source revision you intend to use.
-3. Download the **REcleaner-Windows-x64** artifact and extract it.
-4. Read the [User Guide](docs/USER_GUIDE.md) for installation and hash-check instructions.
+1. Open [ReCleaner Releases](https://github.com/medtarektazarki-dev/ReCleaner/releases).
+2. Choose the newest **REcleaner Windows build** prerelease and download **REcleaner Setup.exe** (or the portable ZIP).
+3. Read the [User Guide](docs/USER_GUIDE.md) for installation and hash-check instructions.
 
-This workflow artifact expires after 30 days. It is not a permanent GitHub Release. The artifact includes SHA-256 checksums to help detect file mismatch or corruption; checksums distributed with the same artifact are not a digital signature.
+Each successful build now publishes downloadable files under Releases. The separate Actions artifact is temporary and expires after 30 days. SHA-256 checksums help detect file mismatch or corruption; checksums distributed with the same release are not a digital signature. These automated builds are prereleases, not stable signed releases.
 
 ## What it solves
 
