@@ -33,7 +33,7 @@ Windows command / tool → normalized result → activity UI
 
 ## Security boundaries
 
-The desktop window currently sets **contextIsolation: true**, **nodeIntegration: false**, and **sandbox: true**. It denies new windows and blocks navigation away from the local file page. Process execution is based on known plans rather than a free-form shell command from the interface; the runner uses spawn with **shell: false**.
+The desktop window currently sets **contextIsolation: true**, **nodeIntegration: false**, and **sandbox: true**. It denies new windows and allows top-level navigation only to the bundled UI page. Each IPC handler checks that the sender is the expected window's main frame and that its URL matches the bundled UI. Process execution is based on known plans rather than a free-form shell command from the interface; the runner uses spawn with **shell: false**.
 
 These are important controls but not a complete threat model. Renderer vulnerabilities, an unsafe plan, flawed parameter validation, dependency compromise, or a privileged operation with unintended side effects can still cause harm. Review IPC sender validation and input-to-command handling whenever changing the renderer, preload, plans, or runner.
 
