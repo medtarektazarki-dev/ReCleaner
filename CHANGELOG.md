@@ -13,6 +13,7 @@ Notable changes to REcleaner are recorded here.
 ### Build and distribution
 
 - Pin GitHub Actions to full commit SHAs and pin the desktop packaging dependency versions.
+- Add a separate CI workflow for type checking, tests, and lint.
 - Verify the expected Windows output files and create SHA-256 checksums for the uploaded artifact.
 - Document that Actions artifacts expire after 30 days and that the current executable workflow does not Authenticode-sign the binaries.
 
