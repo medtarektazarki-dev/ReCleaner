@@ -207,8 +207,8 @@ print("zipped", os.path.getsize(dest))
     cwd: path.join(root, "desktop/installer/setup"),
     env: { ...process.env, GOOS: "windows", GOARCH: "amd64", CGO_ENABLED: "0" },
   });
-  await writeFile(stub, stamp(stub, ico, "REcleaner Setup.exe"));
-  const setupPath = path.join(root, "artifacts/REcleaner Setup.exe");
+  await writeFile(stub, stamp(stub, ico, "REcleaner.Setup.exe"));
+  const setupPath = path.join(root, "artifacts/REcleaner.Setup.exe");
   const stubBuf = await readFile(stub);
   const zipBuf = await readFile(payload);
   const offset = Buffer.alloc(8);

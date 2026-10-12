@@ -58,11 +58,11 @@ jobs:
         shell: bash
         run: |
           test -s "artifacts/REcleaner-win64.zip"
-          test -s "artifacts/REcleaner Setup.exe"
+          test -s "artifacts/REcleaner.Setup.exe"
           test -s "artifacts/REcleaner.ico"
           unzip -l "artifacts/REcleaner-win64.zip" | grep -q "REcleaner.exe"
-          file "artifacts/REcleaner Setup.exe"
-          (cd artifacts && sha256sum "REcleaner-win64.zip" "REcleaner Setup.exe" "REcleaner.ico" > SHA256SUMS.txt)
+          file "artifacts/REcleaner.Setup.exe"
+          (cd artifacts && sha256sum "REcleaner-win64.zip" "REcleaner.Setup.exe" "REcleaner.ico" > SHA256SUMS.txt)
           (cd artifacts && sha256sum --check SHA256SUMS.txt)
 
       - name: Upload Windows build artifacts
@@ -71,7 +71,7 @@ jobs:
           name: REcleaner-Windows-x64
           path: |
             artifacts/REcleaner-win64.zip
-            artifacts/REcleaner Setup.exe
+            artifacts/REcleaner.Setup.exe
             artifacts/REcleaner.ico
             artifacts/SHA256SUMS.txt
           if-no-files-found: error
@@ -88,14 +88,14 @@ jobs:
           title="REcleaner Windows build ${SOURCE_SHA:0:7}"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" \
-              "artifacts/REcleaner Setup.exe" \
+              "artifacts/REcleaner.Setup.exe" \
               "artifacts/REcleaner-win64.zip" \
               "artifacts/REcleaner.ico" \
               "artifacts/SHA256SUMS.txt" \
               --clobber
           else
             gh release create "$tag" \
-              "artifacts/REcleaner Setup.exe" \
+              "artifacts/REcleaner.Setup.exe" \
               "artifacts/REcleaner-win64.zip" \
               "artifacts/REcleaner.ico" \
               "artifacts/SHA256SUMS.txt" \

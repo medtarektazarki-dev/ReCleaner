@@ -21,7 +21,7 @@ REcleaner v1.0.0 is a Windows maintenance application. It checks the PC, repairs
 ## Downloading a Windows build
 
 1. Open [ReCleaner Releases](https://github.com/medtarektazarki-dev/ReCleaner/releases).
-2. Choose the newest **REcleaner Windows build** prerelease and download **REcleaner Setup.exe** (or the portable ZIP).
+2. Choose the newest **REcleaner Windows build** prerelease and download **REcleaner.Setup.exe** (or the portable ZIP).
 3. Read the [User Guide](docs/USER_GUIDE.md) for installation and hash-check instructions.
 
 Each successful build now publishes downloadable files under Releases. The separate Actions artifact is temporary and expires after 30 days. SHA-256 checksums help detect file mismatch or corruption; checksums distributed with the same release are not a digital signature. These automated builds are prereleases, not stable signed releases.
@@ -48,7 +48,7 @@ The product is based on the functionality of the original WindowsRepairToolPro u
 | Tweaks | Individual performance and interface changes, plus restore |
 | Licensing | Windows and Office license status, using a key you supply |
 
-Smart repair runs a fixed sequence: system check, optional restore point, image check, system file check, temporary cleanup, service verification, and a final reading. A failed restore point stops the repair. Image and system-file repair start only when Windows reports that a repair is needed.
+Quick Repair checks the Windows image, checks system files, and then runs temporary cleanup. It stops before the next step if a step does not succeed. Recommended Repair uses findings from Full System Scan, can offer a restore point, runs only the repairs you select, and verifies the related areas again. If a repair fails or returns a warning, further unstarted repairs are blocked; verification can still run after a repair may have partially changed the system.
 
 ## Full system scan
 
@@ -77,7 +77,7 @@ REcleaner window
 
 The desktop application is an Electron window with the system frame hidden. The page talks to the main process through a preload bridge. The main process is the only place that starts Windows programs. Each tool maps to one plan. Plans are an allowlist: the interface cannot pass an arbitrary command line.
 
-Administrator rights are checked with `net session` before an action that needs them. If the process is not elevated, the result is `requires_admin` and the command is not started. Settings and the result dialog can restart REcleaner with `Start-Process -Verb RunAs`.
+Administrator rights are checked against the current Windows security token before an action that needs them. If the process is not elevated, the result is `requires_admin` and the command is not started. Settings and the result dialog can restart REcleaner with `Start-Process -Verb RunAs`.
 
 ## Technology
 
@@ -142,7 +142,7 @@ The setup program is the Go source in `desktop/installer/setup`. The uninstaller
 
 ## Administrator privileges
 
-REcleaner does not require elevation to open. Read-only checks that do not need an administrator run as the current user. Actions marked administrator call `net session` first. If that fails, the action stops with **Administrator access required** and offers **Restart as administrator**. The elevated process is a new instance of `REcleaner.exe`. Declining the Windows prompt is a failure, not a success.
+REcleaner does not require elevation to open. Read-only checks that do not need an administrator run as the current user. Actions marked administrator check the current Windows security token first. If that fails, the action stops with **Administrator access required** and offers **Restart as administrator**. The elevated process is a new instance of `REcleaner.exe`. Declining the Windows prompt is a failure, not a success.
 
 ## Version
 

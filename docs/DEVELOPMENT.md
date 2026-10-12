@@ -50,7 +50,7 @@ npm run desktop:build
 
 The packaging script downloads the Electron Windows x64 runtime and produces:
 
-- **artifacts/REcleaner Setup.exe** — current-user installer.
+- **artifacts/REcleaner.Setup.exe** — current-user installer.
 - **artifacts/REcleaner-win64.zip** — portable folder; the executable must remain beside its bundled resources.
 - **artifacts/REcleaner.ico** — application icon.
 
@@ -70,11 +70,10 @@ Review both statuses before treating a change as ready. A green packaging run do
 Workflow: [Build REcleaner for Windows](../.github/workflows/build-windows.yml).
 
 - Triggered by relevant source changes on **main**, or manually with **Run workflow**.
-- Runs with **contents: read** permission.
-- Pins the GitHub Actions used by the workflow to full commit SHAs.
-- Uses explicit versions for packaging dependencies.
-- Verifies the downloaded Electron runtime against the official release SHA-256 list, verifies expected output files, checks that the portable ZIP contains REcleaner.exe, computes artifact SHA-256 checksums, then uploads the artifact.
-- Upload artifact name: **REcleaner-Windows-x64**.
-- Artifact retention: 30 days.
+- The quality-check workflow has read-only repository permissions. The Windows build workflow uses **contents: write** only to publish versioned prerelease assets to GitHub Releases; checkout disables persisted credentials.
+- Pins the GitHub Actions used by the workflow to full commit SHAs and uses explicit versions for packaging dependencies.
+- Verifies the downloaded Electron runtime against the official release SHA-256 list, verifies the expected output files and portable ZIP contents, computes SHA-256 checksums with the exact published filenames, and validates the checksums before upload.
+- Publishes **REcleaner.Setup.exe**, **REcleaner-win64.zip**, **REcleaner.ico**, and **SHA256SUMS.txt** as a prerelease on GitHub Releases.
+- Also uploads **REcleaner-Windows-x64** as a temporary Actions artifact with 30-day retention.
 
 A green workflow means its configured build and verification steps passed. It does not certify the executable as malware-free, guarantee compatibility with every Windows installation, or replace Windows runtime testing.

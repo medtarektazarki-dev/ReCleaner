@@ -46,7 +46,7 @@ Full System Scan is intended to read system state and suggest actions. Repairs, 
 1. Add an explicit, stable action ID and typed metadata to the plan registry.
 2. Define accepted fields and validate values at the boundary. Never construct an arbitrary executable path or free-form command from renderer input.
 3. Use executable-plus-argument arrays with shell execution disabled wherever possible.
-4. Mark administrator requirements accurately and check them before the operation.
+4. Mark administrator requirements accurately and check the current Windows principal token before the operation. Multi-step actions must stop on failed or unknown exit codes.
 5. Set appropriate timeouts; do not kill DISM or SFC mid-operation without a deliberate, reviewed design.
 6. Separate diagnostics from mutations. Destructive or high-impact operations need a clear confirmation and honest description.
 7. Redact secrets and sensitive output before showing or storing results.
