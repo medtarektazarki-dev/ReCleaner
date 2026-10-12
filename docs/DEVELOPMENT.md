@@ -64,7 +64,7 @@ Workflow: [Build REcleaner for Windows](../.github/workflows/build-windows.yml).
 - Runs with **contents: read** permission.
 - Pins the GitHub Actions used by the workflow to full commit SHAs.
 - Uses explicit versions for packaging dependencies.
-- Verifies expected files, checks that the portable ZIP contains REcleaner.exe, computes SHA-256 checksums, then uploads the artifact.
+- Verifies the downloaded Electron runtime against the official release SHA-256 list, verifies expected output files, checks that the portable ZIP contains REcleaner.exe, computes artifact SHA-256 checksums, then uploads the artifact.
 - Upload artifact name: **REcleaner-Windows-x64**.
 - Artifact retention: 30 days.
 
