@@ -1,0 +1,69 @@
+name: Build REcleaner for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "desktop/**"
+      - "src/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.desktop.config.ts"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y curl unzip
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Install desktop build dependencies
+        run: npm install --no-save esbuild @resvg/resvg-js png-to-ico resedit
+
+      - name: Build Windows application
+        run: npm run desktop:build
+
+      - name: Verify generated files
+        shell: bash
+        run: |
+          test -s "artifacts/REcleaner-win64.zip"
+          test -s "artifacts/REcleaner Setup.exe"
+          test -s "artifacts/REcleaner.ico"
+          unzip -l "artifacts/REcleaner-win64.zip" | grep -q "REcleaner.exe"
+          file "artifacts/REcleaner Setup.exe"
+
+      - name: Upload Windows build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: REcleaner-Windows-x64
+          path: |
+            artifacts/REcleaner-win64.zip
+            artifacts/REcleaner Setup.exe
+            artifacts/REcleaner.ico
+          if-no-files-found: error
+          retention-days: 30
