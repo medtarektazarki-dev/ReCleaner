@@ -106,16 +106,17 @@ npm run build
 
 Requirements, in addition to Node.js 22:
 
+- Linux build host (the packaging script uses Linux paths and tools; GitHub Actions runs it on Ubuntu)
 - Go 1.22 or newer (`go version`)
-- `curl` and `unzip`
+- `curl`, `unzip`, `sha256sum`, and `python3`
 
 Packaging dependencies are not required to run the preview:
 
 ```bash
-npm install esbuild @resvg/resvg-js png-to-ico resedit
+npm ci
+npm install --no-save --package-lock=false esbuild@0.28.2 @resvg/resvg-js@2.6.2 png-to-ico@3.0.2 resedit@3.1.0
 npm run desktop:build
 ```
-
 `desktop:build` runs `node desktop/build.mjs`. That script:
 
 1. Draws the icon from `desktop/brand/icon.svg` and writes `REcleaner.ico`.
