@@ -192,9 +192,9 @@ ipcMain.handle("settings", (event, next) => {
   assertTrustedSender(event);
   if (!next || typeof next !== "object") return;
   saveSettings({
-    launchWithWindows: Boolean(next.launchWithWindows),
-    runMinimized: Boolean(next.runMinimized),
-    notifications: Boolean(next.notifications),
+    launchWithWindows: next.launchWithWindows === true,
+    runMinimized: next.runMinimized === true,
+    notifications: next.notifications === true,
   });
   applyStartup(Boolean(settings.launchWithWindows));
 });

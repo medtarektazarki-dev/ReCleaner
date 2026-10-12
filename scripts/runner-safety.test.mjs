@@ -56,11 +56,14 @@ test("recommended repair halts unstarted repairs after a non-success result", ()
 });
 
  
-test("persisted Electron settings accept only explicit booleans", () => {
+test("persisted settings and IPC values accept only explicit booleans", () => {
   const main = readFileSync(new URL("../desktop/main.cjs", import.meta.url), "utf8");
   assert.match(main, /launchWithWindows: parsed\.launchWithWindows === true/);
   assert.match(main, /runMinimized: parsed\.runMinimized === true/);
   assert.match(main, /notifications: parsed\.notifications === true/);
+  assert.match(main, /launchWithWindows: next\.launchWithWindows === true/);
+  assert.match(main, /runMinimized: next\.runMinimized === true/);
+  assert.match(main, /notifications: next\.notifications === true/);
   assert.doesNotMatch(main, /settings = \{ \.\.\.settings, \.\.\.parsed \}/);
 });
 
