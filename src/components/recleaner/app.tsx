@@ -824,10 +824,10 @@ function Splash() {
       aria-live="polite"
       aria-label="Loading REcleaner"
     >
-      <div className="relative h-[75vh] max-h-[600px] min-h-[420px] w-[74vw] max-w-[960px] min-w-[560px] overflow-hidden bg-[#071b36] shadow-2xl shadow-[#062d20]/20">
-        <div className="absolute inset-0" aria-hidden="true" />
+      <div className="relative aspect-[19/12] w-[74vw] min-w-[280px] max-w-[960px] overflow-hidden bg-[#071b36] shadow-2xl shadow-[#062d20]/20">
         <Mark
-          className="absolute left-1/2 top-0 h-[800px] w-[960px] max-w-none -translate-x-1/2 text-white"
+          preserveAspectRatio="none"
+          className="absolute left-1/2 top-0 h-[133%] w-[101%] max-w-none -translate-x-1/2 text-white"
         />
       </div>
     </div>
