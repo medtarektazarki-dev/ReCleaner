@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -22,6 +23,10 @@ func message(title, text string, flags uintptr) int {
 	b, _ := syscall.UTF16PtrFromString(text)
 	r, _, _ := proc.Call(0, uintptr(unsafe.Pointer(b)), uintptr(unsafe.Pointer(t)), flags)
 	return int(r)
+}
+
+func psQuote(value string) string {
+  return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func main() {
@@ -44,10 +49,17 @@ $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'REcleaner.lnk'
 $start = Join-Path ([Environment]::GetFolderPath('Programs')) 'REcleaner.lnk'
 Remove-Item -LiteralPath $desktop, $start -Force -ErrorAction SilentlyContinue
 `
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", script)
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	_ = cmd.Run()
-	remove := exec.Command("cmd.exe", "/c", "timeout /t 2 /nobreak >nul & rmdir /s /q \""+dir+"\"")
+	if err := cmd.Run(); err != nil {
+		message("REcleaner", "Could not finish removing shortcuts and startup entries. The application files were kept.\n\n"+err.Error(), mbIconErr)
+		return
+	}
+	removeScript := "Start-Sleep -Seconds 2; Remove-Item -LiteralPath " + psQuote(dir) + " -Recurse -Force -ErrorAction SilentlyContinue"
+	remove := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", removeScript)
 	remove.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	_ = remove.Start()
+	if err := remove.Start(); err != nil {
+		message("REcleaner", "REcleaner registry entries were removed, but its program folder could not be scheduled for deletion. You can remove this folder manually:\n\n"+dir, mbIconErr)
+		return
+	}
 }

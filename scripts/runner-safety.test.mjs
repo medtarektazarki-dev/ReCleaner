@@ -35,3 +35,15 @@ test("DISM reports no repair success after a failed stage", () => {
   assert.match(repair, /restore\.code !== 0/);
   assert.match(repair, /classifyDism\(\{ check: "", imageState: "", scan: scan\.output \}\)/);
 });
+
+ 
+test("multi-step action execution stops after a non-zero or null exit code", () => {
+  const steps = section("async function runSteps(", "async function runDism(");
+  assert.match(steps, /if \(result\.code !== 0\)\s*\{\s*code = result\.code;\s*break;/);
+});
+
+test("administrator detection checks the Windows principal token", () => {
+  assert.match(source, /WindowsPrincipal/);
+  assert.match(source, /WindowsIdentity/);
+  assert.doesNotMatch(source, /runProcess\("net\.exe", \["session"\]/);
+});

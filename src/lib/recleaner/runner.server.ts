@@ -83,8 +83,9 @@ function baseResult(
 }
 
 async function isWindowsAdmin(): Promise<boolean> {
-  const result = await runProcess("net.exe", ["session"], 8000);
-  return result.code === 0;
+  const script = "([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)";
+  const result = await runProcess("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], 8000);
+  return !result.error && !result.timedOut && result.code === 0 && /^True\s*$/i.test(result.output.trim());
 }
 
 export async function readHost(): Promise<HostProfile> {
@@ -128,7 +129,10 @@ async function runSteps(steps: Step[], timeoutMs: number): Promise<{ output: str
       code = null;
       break;
     }
-    if (result.code && result.code !== 0) code = result.code;
+    if (result.code !== 0) {
+      code = result.code;
+      break;
+    }
   }
   return { output: blocks.join("\n"), code, timedOut, missing };
 }

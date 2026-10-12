@@ -407,6 +407,8 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         result.state === "unavailable" ||
         result.state === "requires_admin" ||
         result.state === "error" ||
+        result.state === "warning" ||
+        result.state === "cancelled" ||
         (step.actionId === "restore-point" && result.state !== "success");
       nextSteps[i] = { ...step, state: result.state, summary: result.summary };
       if (halted && step.actionId !== "host-read") {
