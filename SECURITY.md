@@ -36,6 +36,6 @@ These controls reduce risk; they are **not** a claim that the application is vul
 
 ## Dependency and build security
 
-The Windows build workflow has read-only repository permissions, checks the generated files, writes SHA-256 checksums, and uploads the resulting artifact for a limited retention period. Checksums help detect file corruption or mismatch; because the checksum file is distributed with the artifact, it is **not** a cryptographic signature and does not independently prove who produced the files.
+The quality-check workflow has read-only repository permissions. The Windows build workflow uses `contents: write` only because it publishes versioned build assets to GitHub Releases; its checkout step disables persisted credentials. It checks generated files, writes SHA-256 checksums, and also uploads a temporary Actions artifact. Checksums help detect file corruption or mismatch; because the checksum file is distributed with the artifact, it is **not** a cryptographic signature and does not independently prove who produced the files.
 
 Please report dependency vulnerabilities through the same private channel.

@@ -133,91 +133,55 @@ async function runSteps(steps: Step[], timeoutMs: number): Promise<{ output: str
   return { output: blocks.join("\n"), code, timedOut, missing };
 }
 
-const DISM_HEALTH =
-  "$r = Repair-WindowsImage -Online -CheckHealth -ErrorAction SilentlyContinue; if ($r) { $r.ImageHealthState }";
-
 async function runDism(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
   const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth", "/English"], 180000);
-  const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 600000);
-  const health = await runProcess("powershell.exe", ["-NoProfile", "-Command", DISM_HEALTH], 120000);
-  const state = health.output.trim();
-  let output = [check.output, scan.output, state].filter(Boolean).join("\n");
-  if (check.error || scan.error) {
-    return baseResult(plan, "error", "DISM could not be started.", { started, isWindows, output, exitCode: null });
+  let output = check.output;
+  if (check.error || check.timedOut || check.code !== 0) {
+    return baseResult(plan, "warning", "DISM CheckHealth did not complete cleanly. No repair was started.", { started, isWindows, output: output || check.error || "DISM returned no usable result.", exitCode: check.code });
   }
-  if (/NonRepairable/i.test(state)) {
-    return baseResult(plan, "warning", "The image is non-repairable. RestoreHealth was not started.", {
-      started,
-      isWindows,
-      output,
-      exitCode: health.code,
-    });
-  }
-  if (/Repairable/i.test(state)) {
-    const restore = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/RestoreHealth", "/English"], 900000);
-    output += `\n${restore.output}`;
-    if (restore.code === 0) {
-      return baseResult(plan, "success", "Component store corruption was repaired.", {
-        started,
-        isWindows,
-        output,
-        exitCode: 0,
-      });
+  let verdict = classifyDism({ check: check.output, imageState: "", scan: null });
+  if (verdict.needsScan || verdict.repairId === "dism-smart") {
+    const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 700000);
+    output = `${output}\\n${scan.output}`.trim();
+    if (scan.error || scan.timedOut || scan.code !== 0) {
+      return baseResult(plan, "warning", "DISM ScanHealth did not complete cleanly. RestoreHealth was not started.", { started, isWindows, output: output || scan.error || "No usable ScanHealth result.", exitCode: scan.code });
     }
-    return baseResult(plan, "error", "RestoreHealth did not complete.", {
-      started,
-      isWindows,
-      output,
-      exitCode: restore.code,
-    });
+    verdict = classifyDism({ check: "", imageState: "", scan: scan.output });
   }
-  if (/Healthy/i.test(state)) {
-    return baseResult(plan, "success", "No component store corruption was detected. RestoreHealth was not started.", {
-      started,
-      isWindows,
-      output,
-      exitCode: 0,
-    });
+  if (verdict.grade === "healthy") {
+    return baseResult(plan, "success", "No component store corruption was detected. RestoreHealth was not started.", { started, isWindows, output, exitCode: 0 });
   }
-  return baseResult(plan, "warning", "Image health was not clear. No repair was started.", {
-    started,
-    isWindows,
-    output,
-    exitCode: health.code,
-  });
+  if (verdict.grade === "critical") return baseResult(plan, "warning", verdict.summary, { started, isWindows, output, exitCode: 0 });
+  if (verdict.repairId !== "dism-smart") {
+    return baseResult(plan, "warning", verdict.summary, { started, isWindows, output, exitCode: null });
+  }
+  const restore = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/RestoreHealth", "/English"], 900000);
+  output = `${output}\\n${restore.output}`.trim();
+  if (restore.error || restore.timedOut || restore.code !== 0) {
+    return baseResult(plan, "error", "RestoreHealth did not complete cleanly. Review output and scan again before retrying.", { started, isWindows, output: output || restore.error || "No usable RestoreHealth result.", exitCode: restore.code });
+  }
+  return baseResult(plan, "success", "DISM RestoreHealth completed successfully. Run a fresh scan to verify the image state.", { started, isWindows, output, exitCode: 0 });
 }
 
 async function runSfc(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
   const verify = await runProcess("sfc.exe", ["/verifyonly"], 900000);
-  const text = verify.output;
-  if (verify.error) {
-    return baseResult(plan, "error", "System file checker could not be started.", {
-      started,
-      isWindows,
-      output: text || verify.error,
-      exitCode: null,
-    });
+  if (verify.error || verify.timedOut) {
+    return baseResult(plan, "error", "System File Checker verification could not complete.", { started, isWindows, output: verify.output || verify.error || "SFC verification timed out.", exitCode: verify.code });
   }
-  const verdict = classifySfc(text, verify.code);
+  const verdict = classifySfc(verify.output, verify.code);
   if (!verdict.repairId) {
-    return baseResult(plan, verdict.grade === "healthy" ? "success" : "warning", verdict.summary, {
-      started,
-      isWindows,
-      output: text,
-      exitCode: verify.code,
-    });
+    return baseResult(plan, verdict.grade === "healthy" ? "success" : "warning", verdict.summary, { started, isWindows, output: verify.output, exitCode: verify.code });
   }
   const scan = await runProcess("sfc.exe", ["/scannow"], 1200000);
-  const output = `${text}\n${scan.output}`;
+  const output = `${verify.output}\\n${scan.output}`;
+  if (scan.error || scan.timedOut || scan.code !== 0) {
+    return baseResult(plan, "warning", "SFC repair did not complete cleanly. The system is not being reported as repaired.", { started, isWindows, output: output || scan.error || "No usable SFC repair result.", exitCode: scan.code });
+  }
   const repaired = classifySfc(scan.output, scan.code);
-  const clear = repaired.grade === "healthy" || scan.code === 0;
-  return baseResult(plan, clear ? "success" : "warning", clear ? "SFC repair finished. Read the verification." : "SFC repair did not complete cleanly.", {
-    started,
-    isWindows,
-    output,
-    exitCode: scan.code,
-  });
+  const clear = repaired.grade === "healthy";
+  return baseResult(plan, clear ? "success" : "warning", clear ? "SFC reported no remaining integrity violations." : "SFC finished, but its output did not confirm a clean result. Review details and verify again.", { started, isWindows, output, exitCode: scan.code });
 }
+
 
 function graded(
   plan: Plan,
@@ -237,21 +201,22 @@ function graded(
 
 async function runDismCheck(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
   const check = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/CheckHealth", "/English"], 180000);
-  const health = await runProcess("powershell.exe", ["-NoProfile", "-Command", DISM_HEALTH], 120000);
-  if (check.error) {
-    return graded(plan, "unknown", "DISM could not be started. No repair was started.", undefined, check.error, started, isWindows, null);
+  if (check.error || check.timedOut || check.code !== 0) {
+    return graded(plan, "unknown", "DISM CheckHealth did not complete cleanly. No repair was started.", undefined, check.output || check.error || "", started, isWindows, check.code);
   }
-  let raw = [check.output, health.output].filter(Boolean).join("\n");
-  let verdict = classifyDism({ check: check.output, imageState: health.output, scan: null });
+  let raw = check.output;
+  let exitCode = check.code;
+  let verdict = classifyDism({ check: check.output, imageState: "", scan: null });
   if (verdict.needsScan) {
     const scan = await runProcess("dism.exe", ["/Online", "/Cleanup-Image", "/ScanHealth", "/English"], 700000);
-    raw = `${raw}\n${scan.output}`;
-    if (scan.error) {
-      return graded(plan, "unknown", "ScanHealth could not be started. RestoreHealth was not started.", undefined, raw, started, isWindows, null);
+    raw = `${raw}\\n${scan.output}`.trim();
+    if (scan.error || scan.timedOut || scan.code !== 0) {
+      return graded(plan, "unknown", "ScanHealth did not complete cleanly. The image state remains unknown.", undefined, raw || scan.error || "", started, isWindows, scan.code);
     }
-    verdict = classifyDism({ check: check.output, imageState: health.output, scan: scan.output });
+    verdict = classifyDism({ check: "", imageState: "", scan: scan.output });
+    exitCode = scan.code;
   }
-  return graded(plan, verdict.grade, verdict.summary, verdict.repairId, raw, started, isWindows, check.code);
+  return graded(plan, verdict.grade, verdict.summary, verdict.repairId, raw, started, isWindows, exitCode);
 }
 
 async function runSfcVerify(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
@@ -265,32 +230,19 @@ async function runSfcVerify(plan: Plan, started: number, isWindows: boolean): Pr
 
 async function runProbe(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
   const script = PROBE_SCRIPT[plan.id];
-  if (!script) {
-    return graded(plan, "unknown", "This diagnostic has no command.", undefined, "", started, isWindows, 1);
-  }
+  if (!script) return graded(plan, "unknown", "This diagnostic has no command.", undefined, "", started, isWindows, 1);
   const result = await runProcess("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], plan.timeoutMs);
-  if (result.error || result.timedOut) {
-    return graded(
-      plan,
-      "unknown",
-      result.timedOut ? "The diagnostic was stopped because it ran too long. Nothing was changed." : "The diagnostic could not be started. Nothing was changed.",
-      undefined,
-      result.output || result.error || "",
-      started,
-      isWindows,
-      null,
-    );
+  if (result.error || result.timedOut || result.code !== 0) {
+    const summary = result.timedOut ? "The diagnostic timed out. Partial output was not treated as a result." : result.error ? "The diagnostic could not be started." : "The diagnostic returned a non-zero exit code; its output was not treated as a valid result.";
+    return graded(plan, "unknown", summary, undefined, result.output || result.error || "", started, isWindows, result.code);
   }
-  if (!/^GRADE=/m.test(result.output)) {
-    return graded(plan, "unknown", "The diagnostic finished without a grade. Nothing was changed.", undefined, result.output, started, isWindows, result.code);
-  }
-  return baseResult(
-    plan,
-    /GRADE=healthy/.test(result.output) ? "success" : /GRADE=critical/.test(result.output) ? "error" : "warning",
-    result.output.match(/^SUMMARY=(.*)$/m)?.[1] || "The diagnostic finished. Read the details.",
-    { started, isWindows, output: result.output, exitCode: result.code },
-  );
+  const grade = result.output.match(/^GRADE=(healthy|attention|warning|critical|unknown)\s*$/m)?.[1] as Grade | undefined;
+  const summary = result.output.match(/^SUMMARY=(.*)$/m)?.[1];
+  if (!grade || !summary) return graded(plan, "unknown", "The diagnostic finished without a valid grade and summary. Nothing was changed.", undefined, result.output, started, isWindows, result.code);
+  const state = grade === "healthy" ? "success" : grade === "critical" ? "error" : "warning";
+  return baseResult(plan, state, summary, { started, isWindows, output: result.output, exitCode: result.code });
 }
+
 
 export const SERVICE_DIAGNOSTIC_SCRIPT = `
 $names = @('RpcSs','DcomLaunch','EventLog','Schedule','Winmgmt','CryptSvc','Dhcp','Dnscache','BITS','wuauserv','WinDefend','mpssvc','Spooler','WlanSvc','bthserv','AudioSrv')
@@ -361,43 +313,73 @@ async function dispatch(plan: Plan, params: Record<string, string>, started: num
 
   if (plan.kind === "services") {
     const result = await runProcess("powershell.exe", ["-NoProfile", "-Command", SERVICE_DIAGNOSTIC_SCRIPT], plan.timeoutMs);
-    const attention = /ATTENTION_COUNT=([1-9]\d*)/.test(result.output);
-    return baseResult(plan, result.error ? "error" : attention ? "warning" : "success", result.error ? "Service verification could not run." : attention ? "One or more automatic services need attention. Nothing was changed." : "Checked services are running or idle. Nothing was changed.", {
-      started,
-      isWindows,
-      output: result.output || result.error || "",
-      exitCode: result.code,
-    });
+    const grade = result.output.match(/^GRADE=(healthy|attention)\s*$/m)?.[1];
+    if (result.error || result.timedOut || result.code !== 0 || !grade) {
+      return baseResult(plan, result.error ? "error" : "warning", "Service verification did not complete cleanly. A healthy state was not assumed.", { started, isWindows, output: result.output || result.error || "No structured service result was returned.", exitCode: result.code });
+    }
+    const attention = grade === "attention";
+    return baseResult(plan, attention ? "warning" : "success", attention ? "One or more automatic services need attention. Nothing was changed." : "Checked services are running, or are not configured to start automatically. Nothing was changed.", { started, isWindows, output: result.output, exitCode: result.code });
   }
 
   if (plan.kind === "clean-temp") {
     const script = `
-$before = (Get-PSDrive -Name ($env:SystemDrive.Substring(0,1))).Free
-$targets = @(
-  "$env:SystemRoot\\Temp",
-  $env:TEMP,
-  "$env:LOCALAPPDATA\\Temp",
-  "$env:LOCALAPPDATA\\Microsoft\\Windows\\INetCache",
-  "$env:LOCALAPPDATA\\D3DSCache"
-)
-foreach ($t in $targets) {
-  if (Test-Path $t) { Get-ChildItem $t -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
+$ErrorActionPreference = 'Stop'
+$systemRoot = [string](Get-ItemPropertyValue -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion' -Name SystemRoot -ErrorAction Stop)
+$systemRoot = [IO.Path]::GetFullPath($systemRoot).TrimEnd('\\')
+$userProfile = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\\')
+$expectedLocal = [IO.Path]::GetFullPath((Join-Path $userProfile 'AppData\\Local')).TrimEnd('\\')
+$local = [IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\\')
+$root = [IO.Path]::GetPathRoot($systemRoot)
+if ($systemRoot.Length -le 3 -or $systemRoot -ieq $root) { throw 'Windows directory failed safety validation. Cleanup cancelled.' }
+if ($local -ine $expectedLocal -or $local.Length -le 3 -or $local -ieq [IO.Path]::GetPathRoot($local)) {
+  throw 'Local AppData did not match the current profile. Cleanup cancelled to protect user files.'
 }
-$pref = "$env:SystemRoot\\Prefetch"
-if (Test-Path $pref) { Remove-Item "$pref\\*" -Force -ErrorAction SilentlyContinue }
-$after = (Get-PSDrive -Name ($env:SystemDrive.Substring(0,1))).Free
-'DifferenceBytes=' + ($after - $before)
+$localItem = Get-Item -LiteralPath $local -Force -ErrorAction Stop
+if (($localItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Local AppData is a reparse point. Cleanup cancelled.' }
+$before = (Get-PSDrive -Name ([IO.Path]::GetPathRoot($systemRoot).Substring(0,1))).Free
+$targets = @(
+  (Join-Path $systemRoot 'Temp'),
+  (Join-Path $local 'Temp'),
+  (Join-Path $local 'Microsoft\\Windows\\INetCache'),
+  (Join-Path $local 'D3DSCache'),
+  (Join-Path $systemRoot 'Prefetch')
+)
+$allow = @{}
+foreach ($candidate in $targets) { $allow[[IO.Path]::GetFullPath($candidate).TrimEnd('\\')] = $true }
+$failed = 0
+foreach ($candidate in $targets) {
+  try {
+    $full = [IO.Path]::GetFullPath($candidate).TrimEnd('\\')
+    $pathRoot = [IO.Path]::GetPathRoot($full)
+    if (-not $allow.ContainsKey($full) -or $full.Length -le 3 -or $full -ieq $pathRoot) { throw 'Cleanup path failed safety validation.' }
+    if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
+    $dir = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+    if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { "SKIPPED_REPARSE=$full"; continue }
+    foreach ($item in Get-ChildItem -LiteralPath $full -Force -ErrorAction Stop) {
+      try {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+          Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
+        } else {
+          Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+        }
+      } catch { $failed++; "ITEM_FAILED=$($item.Name)" }
+    }
+  } catch { $failed++; "TARGET_FAILED=$candidate" }
+}
+$after = (Get-PSDrive -Name ([IO.Path]::GetPathRoot($systemRoot).Substring(0,1))).Free
+"FAILED_ITEMS=$failed"
+"DifferenceBytes=$($after - $before)"
+if ($failed -gt 0) { exit 1 }
+exit 0
 `.trim();
     const result = await runProcess("powershell.exe", ["-NoProfile", "-Command", script], plan.timeoutMs);
     const match = result.output.match(/DifferenceBytes=(-?\d+)/);
     const delta = match ? Number(match[1]) : 0;
     const gb = (Math.round((Math.max(0, delta) / 1073741824) * 100) / 100).toFixed(2);
-    return baseResult(plan, result.code === 0 ? "success" : "warning", `Temporary files were cleaned. About ${gb} GB reported free.`, {
-      started,
-      isWindows,
-      output: result.output,
-      exitCode: result.code,
-    });
+    if (result.error || result.timedOut || result.code !== 0 || !match) {
+      return baseResult(plan, result.error ? "error" : "warning", "Temporary cleanup did not complete cleanly. Review the details; no completed cleanup is assumed.", { started, isWindows, output: result.output || result.error || "No cleanup result was returned.", exitCode: result.code });
+    }
+    return baseResult(plan, "success", `Temporary cleanup completed. The system reported about ${gb} GB more free space.`, { started, isWindows, output: result.output, exitCode: result.code });
   }
 
   if (plan.kind === "driver-scan") {
@@ -411,14 +393,14 @@ foreach ($u in $result.Updates) { $u.Title }
 Write-Output ('COUNT=' + $result.Updates.Count)
 `.trim();
     const result = await runProcess("powershell.exe", ["-NoProfile", "-Command", script], plan.timeoutMs);
-    const count = result.output.match(/COUNT=(\d+)/);
+    if (result.error || result.timedOut || result.code !== 0) {
+      return baseResult(plan, result.error ? "error" : "warning", "Driver update search did not finish cleanly. No driver was installed.", { started, isWindows, output: result.output || result.error || "No driver search result was returned.", exitCode: result.code });
+    }
+    const count = result.output.match(/^COUNT=(\d+)\s*$/m);
     const n = count ? Number(count[1]) : 0;
-    return baseResult(plan, result.error || (result.code && result.code !== 0) ? "warning" : n > 0 ? "warning" : "success", n > 0 ? `${n} driver update(s) were offered. Nothing was installed.` : "No driver updates were offered. Nothing was installed.", {
-      started,
-      isWindows,
-      output: result.output || result.error || "",
-      exitCode: result.code,
-    });
+    if (n > 0) return baseResult(plan, "warning", `${n} driver update(s) were offered. Nothing was installed.`, { started, isWindows, output: result.output, exitCode: result.code });
+    if (/No driver updates were offered\./i.test(result.output)) return baseResult(plan, "success", "No driver updates were offered. Nothing was installed.", { started, isWindows, output: result.output, exitCode: result.code });
+    return baseResult(plan, "warning", "Driver update search returned no recognizable result. No driver was installed.", { started, isWindows, output: result.output, exitCode: result.code });
   }
 
   if (plan.kind === "edition") {
@@ -428,6 +410,9 @@ Write-Output ('COUNT=' + $result.Updates.Count)
       return baseResult(plan, "error", "Choose a listed edition. Nothing was changed.", { started, isWindows, exitCode: 1 });
     }
     const listed = await runProcess("dism.exe", ["/Online", "/Get-TargetEditions"], 180000);
+    if (listed.error || listed.timedOut || listed.code !== 0) {
+      return baseResult(plan, "warning", "Windows target editions could not be checked cleanly. No edition change was started.", { started, isWindows, output: listed.output || listed.error || "", exitCode: listed.code });
+    }
     if (!new RegExp(`\\b${known.value}\\b`, "i").test(listed.output)) {
       return baseResult(plan, "warning", `${known.label} is not an available target on this PC. No key was applied.`, {
         started,

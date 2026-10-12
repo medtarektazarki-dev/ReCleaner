@@ -61,37 +61,16 @@ export function gradeOf(value: string | undefined): Grade {
 export function classifySfc(
   text: string,
   exitCode?: number | null,
-  requireRecognizedSuccess = false,
 ): { grade: Grade; summary: string; repairId?: string } {
   if (/found integrity violations/i.test(text)) {
-    return {
-      grade: "warning",
-      summary: "Integrity violations were reported. Review the verification before assuming the repair worked.",
-      repairId: "sfc-smart",
-    };
+    return { grade: "warning", summary: "Integrity violations were reported. Review the verification before assuming the repair worked.", repairId: "sfc-smart" };
   }
   if (exitCode !== undefined && exitCode !== null && exitCode !== 0) {
-    if (exitCode === 1) {
-      return {
-        grade: "warning",
-        summary: "System file verification returned exit code 1. sfc /scannow was not started.",
-        repairId: "sfc-smart",
-      };
-    }
+    if (exitCode === 1) return { grade: "warning", summary: "System file verification returned exit code 1. sfc /scannow was not started.", repairId: "sfc-smart" };
     return { grade: "unknown", summary: "System File Checker returned a failure exit code. The result was not treated as healthy." };
   }
   if (/successfully repaired/i.test(text) || /did not find any integrity violations/i.test(text)) {
     return { grade: "healthy", summary: "System File Checker reported no remaining integrity violations." };
-  }
-  if (exitCode === 0 && !requireRecognizedSuccess) {
-    return { grade: "healthy", summary: "System file verification returned exit code 0. Repair was not started." };
-  }
-  if (exitCode === 1) {
-    return {
-      grade: "warning",
-      summary: "System file verification returned exit code 1. sfc /scannow was not started.",
-      repairId: "sfc-smart",
-    };
   }
   return { grade: "unknown", summary: "System File Checker did not provide a recognized clean result." };
 }

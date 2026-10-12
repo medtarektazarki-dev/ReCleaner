@@ -12,7 +12,10 @@ on:
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
-      - "eslint.config.js"
+      - "eslint.config.mjs"
+      - "vite.config.ts"
+      - "vite.desktop.config.ts"
+      - "vercel.json"
       - ".github/workflows/quality.yml"
   pull_request:
     branches:
@@ -24,7 +27,10 @@ on:
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
-      - "eslint.config.js"
+      - "eslint.config.mjs"
+      - "vite.config.ts"
+      - "vite.desktop.config.ts"
+      - "vercel.json"
       - ".github/workflows/quality.yml"
 
 permissions:

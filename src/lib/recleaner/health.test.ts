@@ -80,3 +80,19 @@ test("unavailable windows probes are not scored", () => {
   assert.equal(finding.grade, "unknown");
   assert.equal(healthScore([finding]).score, null);
 });
+
+ 
+test("SFC requires a recognized clean message instead of exit code alone", () => {
+  assert.equal(classifySfc("Windows Resource Protection could not perform the requested operation.", 0).grade, "unknown");
+  assert.equal(classifySfc("Windows Resource Protection did not find any integrity violations.", 0).grade, "healthy");
+  assert.equal(classifySfc("Windows Resource Protection found integrity violations.", 0).grade, "warning");
+});
+
+test("DISM ScanHealth evidence overrides a stale CheckHealth result", () => {
+  const scanHealthy = classifyDism({ check: "The component store is repairable.", imageState: "", scan: "No component store corruption detected." });
+  assert.equal(scanHealthy.grade, "healthy");
+  assert.equal(scanHealthy.repairId, undefined);
+  const scanUnclear = classifyDism({ check: "The component store is repairable.", imageState: "", scan: "The operation completed successfully." });
+  assert.equal(scanUnclear.grade, "unknown");
+  assert.equal(scanUnclear.repairId, undefined);
+});
