@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile, copyFile, cp, stat } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -11,7 +12,10 @@ import { Data, NtExecutable, NtExecutableResource, Resource } from "resedit";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const stage = "/tmp/recleaner-stage";
 const electronZip = "/tmp/electron-win.zip";
-const electronUrl = "https://github.com/electron/electron/releases/download/v44.7.0/electron-v44.7.0-win32-x64.zip";
+const electronFileName = "electron-v44.7.0-win32-x64.zip";
+const electronChecksums = "/tmp/electron-SHASUMS256.txt";
+const electronChecksumsUrl = "https://github.com/electron/electron/releases/download/v44.7.0/SHASUMS256.txt";
+const electronUrl = `https://github.com/electron/electron/releases/download/v44.7.0/${electronFileName}`;
 const go = existsSync("/tmp/sdk/go/bin/go") ? "/tmp/sdk/go/bin/go" : "go";
 
 function run(cmd, args, opts = {}) {
@@ -126,6 +130,22 @@ async function main() {
     console.log("downloading Electron Windows runtime");
     await run("curl", ["-fL", "--retry", "3", "-o", electronZip, electronUrl]);
   }
+  console.log("verifying Electron runtime checksum");
+  await run("curl", ["-fL", "--retry", "3", "-o", electronChecksums, electronChecksumsUrl]);
+  const checksumText = await readFile(electronChecksums, "utf8");
+  const checksumParts = checksumText
+    .split(/\r?\n/)
+    .map((line) => line.trim().split(/\s+/))
+    .find((parts) => parts.length >= 2 && parts[parts.length - 1].replace(/^\*/, "") === electronFileName);
+  const expectedChecksum = checksumParts?.[0]?.toLowerCase();
+  if (!expectedChecksum || !/^[a-f0-9]{64}$/.test(expectedChecksum)) {
+    throw new Error(`Missing valid official SHA-256 for ${electronFileName}`);
+  }
+  const actualChecksum = createHash("sha256").update(await readFile(electronZip)).digest("hex");
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(`Electron runtime checksum mismatch for ${electronFileName}`);
+  }
+
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
   await run("unzip", ["-q", electronZip, "-d", stage]);
