@@ -58,18 +58,32 @@ export function gradeOf(value: string | undefined): Grade {
   return "unknown";
 }
 
-export function classifySfc(text: string, exitCode?: number | null): { grade: Grade; summary: string; repairId?: string } {
-  if (/successfully repaired/i.test(text) || /did not find any integrity violations/i.test(text)) {
-    return { grade: "healthy", summary: "Protected system files reported no remaining integrity violations. Repair was not started." };
-  }
+export function classifySfc(
+  text: string,
+  exitCode?: number | null,
+  requireRecognizedSuccess = false,
+): { grade: Grade; summary: string; repairId?: string } {
   if (/found integrity violations/i.test(text)) {
     return {
       grade: "warning",
-      summary: "Integrity violations were reported. sfc /scannow was not started.",
+      summary: "Integrity violations were reported. Review the verification before assuming the repair worked.",
       repairId: "sfc-smart",
     };
   }
-  if (exitCode === 0) {
+  if (exitCode !== undefined && exitCode !== null && exitCode !== 0) {
+    if (exitCode === 1) {
+      return {
+        grade: "warning",
+        summary: "System file verification returned exit code 1. sfc /scannow was not started.",
+        repairId: "sfc-smart",
+      };
+    }
+    return { grade: "unknown", summary: "System File Checker returned a failure exit code. The result was not treated as healthy." };
+  }
+  if (/successfully repaired/i.test(text) || /did not find any integrity violations/i.test(text)) {
+    return { grade: "healthy", summary: "System File Checker reported no remaining integrity violations." };
+  }
+  if (exitCode === 0 && !requireRecognizedSuccess) {
     return { grade: "healthy", summary: "System file verification returned exit code 0. Repair was not started." };
   }
   if (exitCode === 1) {
@@ -79,7 +93,7 @@ export function classifySfc(text: string, exitCode?: number | null): { grade: Gr
       repairId: "sfc-smart",
     };
   }
-  return { grade: "unknown", summary: "The verification result was not clear. Repair was not started." };
+  return { grade: "unknown", summary: "System File Checker did not provide a recognized clean result." };
 }
 
 export function serviceNeedsAttention(state: string, startMode: string): boolean {
@@ -107,22 +121,26 @@ export function classifyDism(input: { check: string; imageState: string; scan: s
   repairId?: string;
   needsScan: boolean;
 } {
-  const blob = `${input.check}\n${input.imageState}\n${input.scan ?? ""}`;
-  if (/not repairable|NonRepairable/i.test(blob)) {
+  const all = `${input.check}\n${input.imageState}\n${input.scan ?? ""}`;
+  if (/not repairable|NonRepairable/i.test(all)) {
     return {
       grade: "critical",
       summary: "The component store is not repairable. RestoreHealth was not started.",
       needsScan: false,
     };
   }
-  if (/No component store corruption detected|\bHealthy\b/i.test(blob)) {
+
+  // ScanHealth is the more recent and more detailed result. When it exists,
+  // do not let an earlier CheckHealth message override it.
+  const evidence = input.scan === null ? `${input.imageState}\n${input.check}` : input.scan;
+  if (/No component store corruption detected|\bHealthy\b/i.test(evidence)) {
     return {
       grade: "healthy",
       summary: "No component store corruption was detected. RestoreHealth was not started.",
       needsScan: false,
     };
   }
-  if (/\brepairable\b/i.test(blob)) {
+  if (/\brepairable\b/i.test(evidence)) {
     return {
       grade: "warning",
       summary: "The component store is repairable. RestoreHealth was not started.",
@@ -130,10 +148,10 @@ export function classifyDism(input: { check: string; imageState: string; scan: s
       needsScan: false,
     };
   }
-  if (input.scan == null) {
+  if (input.scan === null) {
     return { grade: "unknown", summary: "CheckHealth was not conclusive.", needsScan: true };
   }
-  return { grade: "unknown", summary: "Image health was not clear. No repair was started.", needsScan: false };
+  return { grade: "unknown", summary: "ScanHealth did not provide a conclusive image-health result. No repair was started.", needsScan: false };
 }
 
 function memoryGrade(output: string): { grade: Grade; summary: string } {
