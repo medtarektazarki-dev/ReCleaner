@@ -6,6 +6,25 @@ Repair. Clean. Optimize.
 
 REcleaner v1.0.0 is a Windows maintenance application. It checks the PC, repairs only when a check asks for it, and records what actually happened.
 
+## Start here
+
+- **Using REcleaner:** read the [User Guide](docs/USER_GUIDE.md).
+- **Security and safe use:** read [SECURITY.md](SECURITY.md) before running repairs.
+- **Developing or building the app:** start with the [Development Guide](docs/DEVELOPMENT.md).
+- **Understanding the code:** see the [Architecture Overview](docs/ARCHITECTURE.md).
+- **Contributing changes:** use the checklist in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+> **Safety:** REcleaner can run Windows maintenance actions, and some require administrator access or can change system state. Start with a scan, review every proposed action, and back up important data before repairs. The current build workflow does not Authenticode-sign the executables. Do not disable Defender or SmartScreen to run an untrusted file.
+
+## Downloading a Windows build
+
+1. Open [GitHub Actions](https://github.com/medtarektazarki-dev/ReCleaner/actions).
+2. Open a successful **Build REcleaner for Windows** run tied to the source revision you intend to use.
+3. Download the **REcleaner-Windows-x64** artifact and extract it.
+4. Read the [User Guide](docs/USER_GUIDE.md) for installation and hash-check instructions.
+
+This workflow artifact expires after 30 days. It is not a permanent GitHub Release. The artifact includes SHA-256 checksums to help detect file mismatch or corruption; checksums distributed with the same artifact are not a digital signature.
+
 ## What it solves
 
 Windows repair is usually a pile of separate commands: image health, system files, disk checks, services, drivers, and cleanup. REcleaner puts those operations in one window, classifies the risk, and refuses to report success when a command did not run.
