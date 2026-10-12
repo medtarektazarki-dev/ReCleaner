@@ -8,7 +8,7 @@ on:
     paths:
       - "desktop/**"
       - "src/**"
-      - "scripts/**"
+      - "scripts/app-env-plugin.mjs"
       - "package.json"
       - "package-lock.json"
       - "vite.desktop.config.ts"
