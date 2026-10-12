@@ -17,22 +17,28 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: recleaner-windows-build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-windows:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.22.x"
 
@@ -42,8 +48,8 @@ jobs:
       - name: Install project dependencies
         run: npm ci
 
-      - name: Install desktop build dependencies
-        run: npm install --no-save esbuild @resvg/resvg-js png-to-ico resedit
+      - name: Install pinned desktop build dependencies
+        run: npm install --no-save --package-lock=false esbuild@0.28.2 @resvg/resvg-js@2.6.2 png-to-ico@3.0.2 resedit@3.1.0
 
       - name: Build Windows application
         run: npm run desktop:build
@@ -56,14 +62,17 @@ jobs:
           test -s "artifacts/REcleaner.ico"
           unzip -l "artifacts/REcleaner-win64.zip" | grep -q "REcleaner.exe"
           file "artifacts/REcleaner Setup.exe"
+          (cd artifacts && sha256sum "REcleaner-win64.zip" "REcleaner Setup.exe" "REcleaner.ico" > SHA256SUMS.txt)
+          (cd artifacts && sha256sum --check SHA256SUMS.txt)
 
       - name: Upload Windows build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: REcleaner-Windows-x64
           path: |
             artifacts/REcleaner-win64.zip
             artifacts/REcleaner Setup.exe
             artifacts/REcleaner.ico
+            artifacts/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
