@@ -1,14 +1,14 @@
 import { cn } from "@/lib/cn";
 
-const FRAME = "M19.4 4.5H10.2A5.7 5.7 0 0 0 4.5 10.2v11.6a5.7 5.7 0 0 0 5.7 5.7h11.6a5.7 5.7 0 0 0 5.7-5.7V13";
-const INDEX = "M22.6 4.5H27.5V9.4";
+const FRAME = "M4 28V10.5A6.5 6.5 0 0 1 10.5 4H20V8H10.5A2.5 2.5 0 0 0 8 10.5V28Z";
+const CORNER = "M22 4H28V13H24V8H22Z";
 
 export function Mark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={cn("text-fg", className)} aria-hidden="true">
-      <path d={FRAME} fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="butt" />
-      <path d={INDEX} fill="none" stroke="var(--color-core)" strokeWidth="2.6" strokeLinecap="butt" strokeLinejoin="miter" />
-      <rect x="13.15" y="13.15" width="5.7" height="5.7" rx="1.15" fill="currentColor" />
+      <path d={FRAME} fill="currentColor" />
+      <path d={CORNER} fill="currentColor" opacity="0.92" />
+      <rect x="13" y="17" width="6" height="6" rx="1.3" fill="currentColor" />
     </svg>
   );
 }

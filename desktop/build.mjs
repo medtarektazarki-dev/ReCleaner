@@ -123,7 +123,7 @@ async function main() {
     throw new Error("desktop bundle leaked the legacy script or server runner");
   }
   const cssText = await readFile(path.join(assets, css), "utf8");
-  if (!cssText.includes("#07111c") && !cssText.includes("7,17,28")) throw new Error("desktop css missing the navy surface");
+  if (!cssText.includes("#061b35") && !cssText.includes("6,27,53")) throw new Error("desktop css missing the navy surface");
 
   console.log("stage");
   if (!existsSync(electronZip)) {
