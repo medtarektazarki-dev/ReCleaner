@@ -117,6 +117,7 @@ npm ci
 npm install --no-save --package-lock=false esbuild@0.28.2 @resvg/resvg-js@2.6.2 png-to-ico@3.0.2 resedit@3.1.0
 npm run desktop:build
 ```
+
 `desktop:build` runs `node desktop/build.mjs`. That script:
 
 1. Draws the icon from `desktop/brand/icon.svg` and writes `REcleaner.ico`.
