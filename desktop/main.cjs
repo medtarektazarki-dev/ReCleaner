@@ -81,7 +81,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 680,
     show: false,
-    backgroundColor: "#07111c",
+    backgroundColor: "#061b35",
     title: "REcleaner",
     icon: path.join(__dirname, "icon.png"),
     frame: false,
