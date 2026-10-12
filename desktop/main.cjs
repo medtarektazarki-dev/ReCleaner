@@ -40,9 +40,17 @@ function settingsFile() {
 function loadSettings() {
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    if (parsed && typeof parsed === "object") settings = { ...settings, ...parsed };
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      settings = { launchWithWindows: false, runMinimized: false, notifications: false };
+      return;
+    }
+    settings = {
+      launchWithWindows: parsed.launchWithWindows === true,
+      runMinimized: parsed.runMinimized === true,
+      notifications: parsed.notifications === true,
+    };
   } catch {
-    settings = { ...settings };
+    settings = { launchWithWindows: false, runMinimized: false, notifications: false };
   }
 }
 

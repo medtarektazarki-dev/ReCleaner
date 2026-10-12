@@ -550,7 +550,7 @@ export async function executeAction(actionId: string, params: Record<string, str
       return baseResult(plan, "requires_admin", "Administrator access required. The command was not started.", {
         started,
         isWindows,
-        output: "net session did not confirm an elevated process.",
+        output: "The current Windows security token is not elevated, or elevation could not be verified.",
         exitCode: null,
       });
     }

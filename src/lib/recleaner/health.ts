@@ -99,18 +99,16 @@ export function classifyDism(input: { check: string; imageState: string; scan: s
   repairId?: string;
   needsScan: boolean;
 } {
-  const all = `${input.check}\n${input.imageState}\n${input.scan ?? ""}`;
-  if (/not repairable|NonRepairable/i.test(all)) {
+  // ScanHealth, when available, is newer and more detailed than CheckHealth.
+  // Do not let a stale earlier message override its result.
+  const evidence = input.scan === null ? `${input.imageState}\n${input.check}` : input.scan;
+  if (/not repairable|NonRepairable/i.test(evidence)) {
     return {
       grade: "critical",
       summary: "The component store is not repairable. RestoreHealth was not started.",
       needsScan: false,
     };
   }
-
-  // ScanHealth is the more recent and more detailed result. When it exists,
-  // do not let an earlier CheckHealth message override it.
-  const evidence = input.scan === null ? `${input.imageState}\n${input.check}` : input.scan;
   if (/No component store corruption detected|\bHealthy\b/i.test(evidence)) {
     return {
       grade: "healthy",

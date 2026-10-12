@@ -103,3 +103,19 @@ test("SFC does not recommend a repair from a non-zero exit code alone", () => {
   assert.equal(failed.grade, "unknown");
   assert.equal(failed.repairId, undefined);
 });
+
+ 
+test("DISM ScanHealth overrides an older non-repairable CheckHealth message", () => {
+  const current = classifyDism({
+    check: "The component store is not repairable.",
+    imageState: "",
+    scan: "No component store corruption detected.",
+  });
+  assert.equal(current.grade, "healthy");
+  const scanNotRepairable = classifyDism({
+    check: "The component store is repairable.",
+    imageState: "",
+    scan: "The component store is not repairable.",
+  });
+  assert.equal(scanNotRepairable.grade, "critical");
+});

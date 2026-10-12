@@ -54,3 +54,17 @@ test("recommended repair halts unstarted repairs after a non-success result", ()
   assert.match(app, /if \(!verifying && step\.actionId !== "restore-point" && result\.state !== "success"\) repairsOpen = false/);
   assert.match(app, /if \(verifying && !ranRepair\)/);
 });
+
+ 
+test("persisted Electron settings accept only explicit booleans", () => {
+  const main = readFileSync(new URL("../desktop/main.cjs", import.meta.url), "utf8");
+  assert.match(main, /launchWithWindows: parsed\.launchWithWindows === true/);
+  assert.match(main, /runMinimized: parsed\.runMinimized === true/);
+  assert.match(main, /notifications: parsed\.notifications === true/);
+  assert.doesNotMatch(main, /settings = \{ \.\.\.settings, \.\.\.parsed \}/);
+});
+
+test("administrator failure text matches the Windows-principal check", () => {
+  assert.match(source, /The current Windows security token is not elevated/);
+  assert.doesNotMatch(source, /net session did not confirm an elevated process/);
+});

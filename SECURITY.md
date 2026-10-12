@@ -21,7 +21,7 @@ The source currently includes these safeguards:
 - Desktop renderer uses Electron settings **contextIsolation: true**, **nodeIntegration: false**, and **sandbox: true** in desktop/main.cjs.
 - New windows are denied, top-level navigation is limited to the bundled UI page, and IPC handlers reject calls from unexpected frames or URLs.
 - UI requests are action IDs mapped to allowlisted plans in src/lib/recleaner/plans.ts; process execution in src/lib/recleaner/runner.server.ts uses argument arrays with **shell: false**.
-- Actions marked as administrator-required are expected to check elevation before execution.
+- Actions marked as administrator-required check the current Windows principal token before execution; failures are returned as `requires_admin` instead of starting the action.
 - Full system scan is documented as diagnostic/read-only; repairs are separate actions.
 
 These controls reduce risk; they are **not** a claim that the application is vulnerability-free or has undergone an independent security audit. A valid action can still make consequential system changes.
