@@ -34,9 +34,29 @@ func main() {
 	if err != nil {
 		return
 	}
-	dir := filepath.Clean(filepath.Dir(self))
+	localAppData := os.Getenv("LOCALAPPDATA")
+	if localAppData == "" {
+		message("REcleaner", "Uninstall stopped because the current user's Local AppData folder could not be identified. No files were deleted.", mbIconErr)
+		return
+	}
+	actualDir, err := filepath.Abs(filepath.Clean(filepath.Dir(self)))
+	if err != nil {
+		message("REcleaner", "Uninstall stopped because the application folder could not be resolved. No files were deleted.", mbIconErr)
+		return
+	}
+	expectedDir, err := filepath.Abs(filepath.Join(localAppData, "Programs", "REcleaner"))
+	if err != nil {
+		message("REcleaner", "Uninstall stopped because the expected installation folder could not be resolved. No files were deleted.", mbIconErr)
+		return
+	}
+	volumeRoot := filepath.Clean(filepath.VolumeName(actualDir) + string(os.PathSeparator))
+	if !strings.EqualFold(actualDir, expectedDir) || strings.EqualFold(actualDir, volumeRoot) {
+		message("REcleaner", "This is not the installed copy of REcleaner. For a portable copy, close REcleaner and delete the extracted folder manually. No folder was deleted.", mbIconInf)
+		return
+	}
+	dir := actualDir
 	if _, err := os.Stat(filepath.Join(dir, "REcleaner.exe")); err != nil {
-		message("REcleaner", "Uninstall stopped. REcleaner.exe is not in this folder.", mbIconErr)
+		message("REcleaner", "Uninstall stopped. REcleaner.exe is not in the installed application folder. No files were deleted.", mbIconErr)
 		return
 	}
 	if message("REcleaner", "Remove REcleaner from this PC?\n\nYour Windows system files are not removed.", mbYesNo|mbIconInf) != idYes {
