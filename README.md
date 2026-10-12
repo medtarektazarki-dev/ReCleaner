@@ -8,6 +8,8 @@ REcleaner v1.0.0 is a Windows maintenance application. It checks the PC, repairs
 
 ## Start here
 
+- **What's changed:** see [CHANGELOG.md](CHANGELOG.md).
+
 - **Using REcleaner:** read the [User Guide](docs/USER_GUIDE.md).
 - **Security and safe use:** read [SECURITY.md](SECURITY.md) before running repairs.
 - **Developing or building the app:** start with the [Development Guide](docs/DEVELOPMENT.md).
