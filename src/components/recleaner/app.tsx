@@ -819,23 +819,16 @@ function cancelled(tool: Tool): ServerResult {
 function Splash() {
   return (
     <div
-      className="recleaner-splash absolute inset-0 z-30 flex flex-col items-center justify-center gap-7 overflow-hidden bg-[#00b83f] px-6 text-center text-[#071b36]"
+      className="recleaner-splash absolute inset-0 z-30 flex items-center justify-center overflow-hidden bg-[#00b83f]"
       role="status"
       aria-live="polite"
       aria-label="Loading REcleaner"
     >
-      <div className="pointer-events-none absolute inset-4 rounded-[30px] border border-white/20 sm:inset-6" aria-hidden="true" />
-      <div className="splash-glow pointer-events-none absolute inset-0" aria-hidden="true" />
-      <div className="relative flex size-40 items-center justify-center rounded-[28px] bg-[#071b36] shadow-2xl shadow-[#071b36]/25 ring-1 ring-white/20 sm:size-44">
-        <Mark className="size-[92px] text-white sm:size-[108px]" />
-      </div>
-      <div className="relative">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">REcleaner</h1>
-        <p className="mt-2 text-sm font-medium tracking-wide text-[#071b36]/80">Repair. Clean. Optimize.</p>
-        <p className="mt-1 text-xs font-medium uppercase tracking-[0.22em] text-[#071b36]/55">Windows system care</p>
-      </div>
-      <div className="relative h-1 w-32 overflow-hidden rounded-full bg-[#071b36]/15" aria-hidden="true">
-        <div className="splash-progress h-full w-2/5 rounded-full bg-[#071b36]" />
+      <div className="relative h-[75vh] max-h-[600px] min-h-[420px] w-[74vw] max-w-[960px] min-w-[560px] overflow-hidden bg-[#071b36] shadow-2xl shadow-[#062d20]/20">
+        <div className="absolute inset-0" aria-hidden="true" />
+        <Mark
+          className="absolute left-1/2 top-0 h-[800px] w-[960px] max-w-none -translate-x-1/2 text-white"
+        />
       </div>
     </div>
   );
