@@ -37,10 +37,8 @@ test("DISM reports no repair success after a failed stage", () => {
 });
 
  
-test("multi-step action execution stops after a non-zero or null exit code", () => {
-  const steps = section("async function runSteps(", "async function runDism(");
-  assert.match(steps, /if \(result\.code !== 0\)\s*\{\s*code = result\.code;\s*break;/);
-});
+// Multi-step failure handling (first failure wins, recovery steps still run, optional steps never fail
+// the chain) is covered by behavioural tests in src/lib/recleaner/runner.test.ts.
 
 test("administrator detection checks the Windows principal token", () => {
   assert.match(source, /WindowsPrincipal/);

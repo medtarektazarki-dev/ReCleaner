@@ -3,7 +3,7 @@ const { execFile } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { executeAction, readHost } = require("./runner.cjs");
+const { executeAction, readHost, parseRunRequest, rejectedRequest } = require("./runner.cjs");
 
 process.env.RECLEANER_EXE = process.execPath;
 
@@ -73,15 +73,6 @@ function applyStartup(enabled) {
   execFile("powershell.exe", ["-NoProfile", "-Command", command], { windowsHide: true });
 }
 
-function cleanParams(input) {
-  const params = {};
-  if (!input || typeof input !== "object") return params;
-  for (const [key, value] of Object.entries(input)) {
-    if (typeof value === "string") params[key] = value;
-  }
-  return params;
-}
-
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -116,10 +107,15 @@ function createWindow() {
     win.show();
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  win.webContents.on("will-navigate", (event, url) => {
-    if (url === trustedUiUrl()) return;
-    event.preventDefault();
-  });
+  const keepOnBundledPage = (event, url) => {
+    if (url !== trustedUiUrl()) event.preventDefault();
+  };
+  win.webContents.on("will-navigate", keepOnBundledPage);
+  win.webContents.on("will-redirect", keepOnBundledPage);
+  win.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  // The interface needs no camera, microphone, location, or other browser permission.
+  win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  win.webContents.session.setPermissionCheckHandler(() => false);
   void win.loadFile(path.join(__dirname, "ui", "index.html"));
 }
 
@@ -184,8 +180,9 @@ ipcMain.handle("host", (event) => {
 
 ipcMain.handle("run", async (event, actionId, params) => {
   assertTrustedSender(event);
-  const id = typeof actionId === "string" ? actionId : "";
-  return executeAction(id, cleanParams(params));
+  const request = parseRunRequest(actionId, params);
+  if (!request.ok) return rejectedRequest(request.message);
+  return executeAction(request.actionId, request.params);
 });
 
 ipcMain.handle("settings", (event, next) => {

@@ -44,7 +44,17 @@ export const FIELD_META: Record<FieldKey, FieldMeta> = {
   },
 };
 
-export type Step = { label: string; file: string; args: string[] };
+export type Step = {
+  label: string;
+  file: string;
+  args: string[];
+  /** Runs even after an earlier step failed, so a chain that stopped a service always tries to start it again. */
+  always?: boolean;
+  /** A failure is recorded in the output but does not fail the action. */
+  optional?: boolean;
+  /** Text written to the program's standard input. Without it, standard input is closed. */
+  input?: string;
+};
 
 export type Plan = {
   id: string;
@@ -52,7 +62,11 @@ export type Plan = {
   windowsOnly: boolean;
   admin: boolean;
   timeoutMs: number;
-  kind?: "host" | "dism" | "dism-check" | "sfc" | "sfc-verify" | "services" | "clean-temp" | "driver-scan" | "relaunch" | "edition" | "office-remove" | "probe";
+  kind?: "host" | "dism" | "dism-check" | "sfc" | "sfc-verify" | "services" | "clean-temp" | "driver-scan" | "relaunch" | "edition" | "office-remove" | "probe" | "restore-point";
+  /** The action rewrites attributes or policy across a whole drive, so the Windows drive is refused. */
+  blockSystemDrive?: boolean;
+  /** The action would lock the signed-in user out of their own account. */
+  protectCurrentUser?: boolean;
   fields?: FieldKey[];
   optional?: FieldKey[];
   steps?: Step[];
@@ -81,6 +95,16 @@ function regDel(label: string, path: string, name?: string): Step {
 
 function ps(label: string, command: string): Step {
   return { label, file: "powershell.exe", args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command] };
+}
+
+// net.exe exits 2 when a service is already in the requested state, which would abort a repair chain
+// halfway. Stop-Service and Start-Service are idempotent and still fail on a real error.
+function svcStop(name: string): Step {
+  return ps(`Stop ${name}`, `Stop-Service -Name '${name}' -Force -ErrorAction Stop`);
+}
+
+function svcStart(name: string): Step {
+  return { ...ps(`Start ${name}`, `Start-Service -Name '${name}' -ErrorAction Stop`), always: true };
 }
 
 const DNS = "Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ";
@@ -196,7 +220,7 @@ function sequential(
   id: string,
   title: string,
   steps: Step[],
-  extra?: Partial<Pick<Plan, "fields" | "optional" | "timeoutMs" | "admin" | "notes">>,
+  extra?: Partial<Pick<Plan, "fields" | "optional" | "timeoutMs" | "admin" | "notes" | "blockSystemDrive" | "protectCurrentUser">>,
 ) {
   add({
     id,
@@ -208,6 +232,8 @@ function sequential(
     fields: extra?.fields,
     optional: extra?.optional,
     notes: extra?.notes,
+    blockSystemDrive: extra?.blockSystemDrive,
+    protectCurrentUser: extra?.protectCurrentUser,
   });
 }
 
@@ -233,11 +259,12 @@ sequential("clean-dumps", "Crash dump cleanup", [
 
 sequential("internet-reset", "Network reset", [
   { label: "Flush DNS", file: "ipconfig.exe", args: ["/flushdns"] },
-  { label: "Release", file: "ipconfig.exe", args: ["/release"] },
-  { label: "Renew", file: "ipconfig.exe", args: ["/renew"] },
   { label: "Reset Winsock", file: "netsh.exe", args: ["winsock", "reset"] },
   { label: "Reset IP", file: "netsh.exe", args: ["int", "ip", "reset"] },
-], { timeoutMs: 180000 });
+  // ipconfig exits 1 when no adapter uses DHCP (static addresses, unplugged cable). That must not hide the resets above.
+  { label: "Release", file: "ipconfig.exe", args: ["/release"], optional: true },
+  { label: "Renew", file: "ipconfig.exe", args: ["/renew"], optional: true },
+], { timeoutMs: 180000, notes: ["Windows may ask for a restart before the Winsock and IP resets take effect."] });
 
 sequential("clean-events", "Clear event logs", [
   ps("Clear logs", "wevtutil el | ForEach-Object { wevtutil cl $_ }"),
@@ -264,12 +291,18 @@ sequential("ram-note", "Memory trim", [
   ),
 ], { notes: ["Does not download RAMMap. Reports free physical memory only."] });
 
-sequential("restore-point", "Restore point", [
-  ps(
-    "Create restore point",
-    "Enable-ComputerRestore -Drive 'C:\\' -ErrorAction SilentlyContinue; Checkpoint-Computer -Description 'REcleaner' -RestorePointType 'MODIFY_SETTINGS'",
-  ),
-], { timeoutMs: 180000 });
+add({
+  id: "restore-point",
+  title: "Restore point",
+  windowsOnly: true,
+  admin: true,
+  timeoutMs: 180000,
+  kind: "restore-point",
+  notes: [
+    "Enable-ComputerRestore on the Windows drive, then Checkpoint-Computer.",
+    "Success is reported only when a newer restore point exists afterwards. Windows normally allows one automatic restore point per 24 hours.",
+  ],
+});
 
 sequential("chkdsk", "Schedule disk check", [
   { label: "Schedule CHKDSK", file: "chkdsk.exe", args: ["{{drive}}:", "/f", "/r"] },
@@ -304,7 +337,7 @@ sequential("disk-speed", "Disk speed", [
 
 sequential("usb-rescue", "Unhide files", [
   { label: "Clear hidden attributes", file: "attrib.exe", args: ["-h", "-r", "-s", "/s", "/d", "{{drive}}:\\*.*"] },
-], { fields: ["drive"], timeoutMs: 300000 });
+], { fields: ["drive"], timeoutMs: 300000, blockSystemDrive: true });
 
 sequential("write-protect", "Clear write protection", [
   regAdd("Storage policy", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\StorageDevicePolicies", "WriteProtect", "REG_DWORD", "0"),
@@ -369,8 +402,8 @@ sequential("wifi-passwords", "Saved Wi-Fi networks", [
 ], { timeoutMs: 60000 });
 
 sequential("disable-updates", "Disable Windows Update", [
-  { label: "Stop wuauserv", file: "net.exe", args: ["stop", "wuauserv"] },
-  { label: "Stop bits", file: "net.exe", args: ["stop", "bits"] },
+  svcStop("wuauserv"),
+  svcStop("bits"),
   { label: "Disable wuauserv", file: "sc.exe", args: ["config", "wuauserv", "start=", "disabled"] },
   { label: "Disable bits", file: "sc.exe", args: ["config", "bits", "start=", "disabled"] },
   regAdd("No auto update", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU", "NoAutoUpdate", "REG_DWORD", "1"),
@@ -380,8 +413,8 @@ sequential("enable-updates", "Enable Windows Update", [
   regAdd("wuauserv demand", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\wuauserv", "Start", "REG_DWORD", "3"),
   regAdd("bits auto", "HKLM\\SYSTEM\\CurrentControlSet\\Services\\bits", "Start", "REG_DWORD", "2"),
   regDel("Clear no-auto policy", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU", "NoAutoUpdate"),
-  { label: "Start wuauserv", file: "net.exe", args: ["start", "wuauserv"] },
-  { label: "Start bits", file: "net.exe", args: ["start", "bits"] },
+  svcStart("wuauserv"),
+  svcStart("bits"),
 ]);
 
 function dnsPlan(id: string, title: string, script: string) {
@@ -452,13 +485,13 @@ sequential("fw-unblock", "Unblock program", [
 ], { fields: ["exePath"] });
 
 sequential("winupdate-repair", "Repair Windows Update", [
-  { label: "Stop wuauserv", file: "net.exe", args: ["stop", "wuauserv"] },
-  { label: "Stop bits", file: "net.exe", args: ["stop", "bits"] },
-  { label: "Stop cryptsvc", file: "net.exe", args: ["stop", "cryptsvc"] },
+  svcStop("wuauserv"),
+  svcStop("bits"),
+  svcStop("cryptsvc"),
   ps("Clear update cache", "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'C:\\Windows\\SoftwareDistribution','C:\\Windows\\System32\\catroot2'"),
-  { label: "Start wuauserv", file: "net.exe", args: ["start", "wuauserv"] },
-  { label: "Start bits", file: "net.exe", args: ["start", "bits"] },
-  { label: "Start cryptsvc", file: "net.exe", args: ["start", "cryptsvc"] },
+  svcStart("wuauserv"),
+  svcStart("bits"),
+  svcStart("cryptsvc"),
 ], { timeoutMs: 180000 });
 
 sequential("store-repair", "Repair Store apps", [
@@ -484,30 +517,30 @@ sequential("taskbar-repair", "Repair shell", [
 ]);
 
 sequential("fix-audio", "Restart audio", [
-  { label: "Stop audio", file: "net.exe", args: ["stop", "audiosrv"] },
-  { label: "Stop endpoint builder", file: "net.exe", args: ["stop", "AudioEndpointBuilder"] },
-  { label: "Start endpoint builder", file: "net.exe", args: ["start", "AudioEndpointBuilder"] },
-  { label: "Start audio", file: "net.exe", args: ["start", "audiosrv"] },
+  svcStop("audiosrv"),
+  svcStop("AudioEndpointBuilder"),
+  svcStart("AudioEndpointBuilder"),
+  svcStart("audiosrv"),
 ]);
 
 sequential("fix-bluetooth", "Restart Bluetooth", [
-  { label: "Stop bthserv", file: "net.exe", args: ["stop", "bthserv"] },
-  { label: "Start bthserv", file: "net.exe", args: ["start", "bthserv"] },
+  svcStop("bthserv"),
+  svcStart("bthserv"),
 ]);
 
 sequential("fix-printer", "Clear print queue", [
-  { label: "Stop spooler", file: "net.exe", args: ["stop", "spooler"] },
+  svcStop("spooler"),
   ps("Clear queue", "Remove-Item -Force -ErrorAction SilentlyContinue \"$env:SystemRoot\\System32\\Spool\\Printers\\*.*\""),
-  { label: "Start spooler", file: "net.exe", args: ["start", "spooler"] },
+  svcStart("spooler"),
 ]);
 
 sequential("restart-core", "Restart core services", [
-  { label: "Stop wuauserv", file: "net.exe", args: ["stop", "wuauserv"] },
-  { label: "Start wuauserv", file: "net.exe", args: ["start", "wuauserv"] },
-  { label: "Stop bits", file: "net.exe", args: ["stop", "bits"] },
-  { label: "Start bits", file: "net.exe", args: ["start", "bits"] },
-  { label: "Stop cryptsvc", file: "net.exe", args: ["stop", "cryptsvc"] },
-  { label: "Start cryptsvc", file: "net.exe", args: ["start", "cryptsvc"] },
+  svcStop("wuauserv"),
+  svcStart("wuauserv"),
+  svcStop("bits"),
+  svcStart("bits"),
+  svcStop("cryptsvc"),
+  svcStart("cryptsvc"),
 ]);
 
 sequential("quick-scan", "Defender quick scan", [
@@ -532,7 +565,7 @@ sequential("defender-history", "Clear Defender history", [
 sequential("defender-repair", "Repair Defender", [
   regDel("Remove Defender policy", "HKLM\\Software\\Policies\\Microsoft\\Windows Defender"),
   { label: "Automatic start", file: "sc.exe", args: ["config", "WinDefend", "start=", "auto"] },
-  { label: "Start WinDefend", file: "net.exe", args: ["start", "WinDefend"] },
+  svcStart("WinDefend"),
   { label: "Signature update", file: "C:\\Program Files\\Windows Defender\\MpCmdRun.exe", args: ["-SignatureUpdate"] },
 ]);
 
@@ -543,20 +576,20 @@ sequential("firewall-reset", "Reset firewall", [
 sequential("hosts-reset", "Reset hosts file", [
   ps(
     "Write default hosts",
-    "$p = Join-Path $env:SystemRoot 'System32\\drivers\\etc\\hosts'; Copy-Item $p ($p + '.recleaner.bak') -Force -ErrorAction SilentlyContinue; @('# Copyright (c) 1993-2009 Microsoft Corp.','127.0.0.1 localhost','::1 localhost') | Set-Content $p -Encoding ascii",
+    "$ErrorActionPreference = 'Stop'; $p = Join-Path $env:SystemRoot 'System32\\drivers\\etc\\hosts'; $bak = $p + '.recleaner-' + (Get-Date -Format 'yyyyMMddHHmmss') + '.bak'; if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination $bak; 'BACKUP=' + $bak }; @('# Copyright (c) 1993-2009 Microsoft Corp.','127.0.0.1 localhost','::1 localhost') | Set-Content -LiteralPath $p -Encoding ascii",
   ),
-]);
+], { notes: ["Copies the hosts file to a timestamped .recleaner-<time>.bak file first. If the backup fails, the hosts file is not changed."] });
 
 sequential("telemetry-off", "Disable telemetry", [
   regAdd("AllowTelemetry", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection", "AllowTelemetry", "REG_DWORD", "0"),
   { label: "Disable DiagTrack", file: "sc.exe", args: ["config", "DiagTrack", "start=", "disabled"] },
-  { label: "Stop DiagTrack", file: "sc.exe", args: ["stop", "DiagTrack"] },
+  svcStop("DiagTrack"),
 ]);
 
 sequential("telemetry-on", "Enable telemetry", [
   regAdd("AllowTelemetry", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection", "AllowTelemetry", "REG_DWORD", "1"),
   { label: "Enable DiagTrack", file: "sc.exe", args: ["config", "DiagTrack", "start=", "auto"] },
-  { label: "Start DiagTrack", file: "net.exe", args: ["start", "DiagTrack"] },
+  svcStart("DiagTrack"),
 ]);
 
 sequential("driver-backup", "Backup drivers", [
@@ -767,7 +800,7 @@ sequential("user-add", "Create account", [
 
 sequential("user-delete", "Delete account", [
   { label: "Delete user", file: "net.exe", args: ["user", "{{user}}", "/delete"] },
-], { fields: ["user"] });
+], { fields: ["user"], protectCurrentUser: true });
 
 sequential("user-rename", "Rename account", [
   ps("Rename", "Rename-LocalUser -Name '{{user}}' -NewName '{{newName}}'"),
@@ -789,7 +822,7 @@ sequential("user-revoke", "Revoke administrator", [
     "Remove from administrators",
     "$g = (Get-LocalGroup | Where-Object { $_.SID -eq 'S-1-5-32-544' }).Name; net localgroup $g '{{user}}' /delete",
   ),
-], { fields: ["user"] });
+], { fields: ["user"], protectCurrentUser: true });
 
 sequential("user-hide", "Hide account", [
   regAdd("Hide from sign-in", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList", "{{user}}", "REG_DWORD", "0"),
@@ -801,7 +834,7 @@ sequential("user-show", "Show account", [
 
 sequential("user-disable", "Disable account", [
   { label: "Disable", file: "net.exe", args: ["user", "{{user}}", "/active:no"] },
-], { fields: ["user"] });
+], { fields: ["user"], protectCurrentUser: true });
 
 sequential("user-enable", "Enable account", [
   { label: "Enable", file: "net.exe", args: ["user", "{{user}}", "/active:yes"] },
@@ -841,7 +874,7 @@ const TWEAK_STEPS: Record<string, Step[]> = {
   ],
   "tweak-sysmain": [
     { label: "Disable SysMain", file: "sc.exe", args: ["config", "SysMain", "start=", "disabled"] },
-    { label: "Stop SysMain", file: "net.exe", args: ["stop", "SysMain"] },
+    svcStop("SysMain"),
   ],
   "tweak-dvr": [
     regAdd("Game DVR", "HKCU\\System\\GameConfigStore", "GameDVR_Enabled", "REG_DWORD", "0"),
@@ -894,7 +927,7 @@ sequential("tweak-restore", "Restore tweak defaults", [
   regAdd("Responsiveness", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile", "SystemResponsiveness", "REG_DWORD", "20"),
   regDel("Bing policy", "HKCU\\Software\\Policies\\Microsoft\\Windows\\Explorer", "DisableSearchBoxSuggestions"),
   { label: "SysMain automatic", file: "sc.exe", args: ["config", "SysMain", "start=", "auto"] },
-  { label: "Start SysMain", file: "net.exe", args: ["start", "SysMain"] },
+  svcStart("SysMain"),
   regAdd("Game DVR", "HKCU\\System\\GameConfigStore", "GameDVR_Enabled", "REG_DWORD", "1"),
   regAdd("MouseSpeed", "HKCU\\Control Panel\\Mouse", "MouseSpeed", "REG_SZ", "1"),
   { label: "Hibernate on", file: "powercfg.exe", args: ["/hibernate", "on"] },
@@ -981,6 +1014,8 @@ export function validateField(field: FieldKey, raw: string, optional: boolean): 
   }
   if (field === "password") {
     if (value.length > 64 || /[\r\n\0]/.test(value)) return { ok: false, message: "That password cannot be used." };
+    // net.exe reads a leading "/" as a switch (a password of "/delete" would delete the account) and "*" as a prompt.
+    if (/^[/*]/.test(value)) return { ok: false, message: "A password cannot start with / or *." };
     return { ok: true, value };
   }
   if (field === "packageId") {

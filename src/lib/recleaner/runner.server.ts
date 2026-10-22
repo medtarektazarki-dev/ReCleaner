@@ -1,7 +1,7 @@
 import type { HostProfile, ServerResult } from "./types";
-import { PROBE_SCRIPT } from "./diagnostics";
-import { classifyDism, classifySfc, type Grade } from "./health";
-import { redact } from "./redact";
+import { PROBE_SCRIPT } from "./diagnostics.ts";
+import { classifyDism, classifySfc, type Grade } from "./health.ts";
+import { redact } from "./redact.ts";
 import {
   EDITIONS,
   applyTokens,
@@ -10,14 +10,39 @@ import {
   validateField,
   type Plan,
   type Step,
-} from "./plans";
+} from "./plans.ts";
 
 type RunOut = { code: number | null; output: string; timedOut: boolean; error?: string };
 
-async function runProcess(file: string, args: string[], timeoutMs: number): Promise<RunOut> {
+/**
+ * Windows tools are launched from System32 by absolute path. A bare name would be searched for in the
+ * working directory and PATH first, and this process is often elevated while those places are writable
+ * by the signed-in user.
+ */
+export function resolveTool(
+  file: string,
+  platform: string = process.platform,
+  systemRoot: string = process.env.SystemRoot || process.env.windir || "C:\\Windows",
+  exists: (path: string) => boolean = () => false,
+): string {
+  if (platform !== "win32" || /[\\/:]/.test(file)) return file;
+  const folder = file.toLowerCase() === "powershell.exe" ? "System32\\WindowsPowerShell\\v1.0" : "System32";
+  const candidate = `${systemRoot.replace(/[\\/]+$/, "")}\\${folder}\\${file}`;
+  return exists(candidate) ? candidate : file;
+}
+
+/** sfc.exe writes UTF-16 when its output is piped, which reads as text with a NUL after every character. */
+function decodeOutput(chunk: Buffer | string): string {
+  const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  return text.replaceAll("\u0000", "");
+}
+
+export async function runProcess(file: string, args: string[], timeoutMs: number, input?: string): Promise<RunOut> {
   const { spawn } = await import("node:child_process");
+  const { existsSync } = await import("node:fs");
   const name = file.split(/[/\\]/).pop()?.toLowerCase() ?? "";
   const durable = name === "dism.exe" || name === "sfc.exe";
+  const program = resolveTool(file, process.platform, undefined, existsSync);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: RunOut) => {
@@ -27,9 +52,15 @@ async function runProcess(file: string, args: string[], timeoutMs: number): Prom
     };
     let output = "";
     let overdue = false;
-    const child = spawn(file, args, { windowsHide: true, shell: false });
+    // Standard input is closed unless the step supplies text, so a tool that asks a question fails
+    // immediately instead of waiting on a pipe that nothing will ever write to.
+    const child = spawn(program, args, { windowsHide: true, shell: false, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    if (input !== undefined) {
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(input);
+    }
     const append = (chunk: Buffer | string) => {
-      output += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      output += decodeOutput(chunk);
       if (output.length > 30000) output = output.slice(-30000);
     };
     child.stdout?.on("data", append);
@@ -108,33 +139,106 @@ export async function readHost(): Promise<HostProfile> {
   };
 }
 
-async function runSteps(steps: Step[], timeoutMs: number): Promise<{ output: string; code: number | null; timedOut: boolean; missing: boolean }> {
+type RunFn = (file: string, args: string[], timeoutMs: number, input?: string) => Promise<RunOut>;
+
+/**
+ * Runs steps in order and stops at the first failure. Steps marked `always` still run afterwards (they
+ * undo what an earlier step did, such as restarting a service) and steps marked `optional` never fail
+ * the chain. The reported code, timeout and missing-program flags always describe the first failure.
+ */
+export async function runSteps(
+  steps: Step[],
+  timeoutMs: number,
+  run: RunFn = runProcess,
+): Promise<{ output: string; code: number | null; timedOut: boolean; missing: boolean }> {
   const blocks: string[] = [];
   let code: number | null = 0;
   let timedOut = false;
   let missing = false;
+  let failed = false;
   const slice = Math.max(15000, Math.floor(timeoutMs / Math.max(1, steps.length)));
   for (const step of steps) {
+    if (failed && !step.always) {
+      blocks.push(`— ${step.label} (not run: an earlier step failed)`);
+      continue;
+    }
     blocks.push(`— ${step.label}`);
-    const result = await runProcess(step.file, step.args, slice);
+    const result = await run(step.file, step.args, slice, step.input);
     if (result.output.trim()) blocks.push(result.output.trim());
-    if (result.error) {
-      missing = true;
-      blocks.push(result.error);
-      code = null;
-      break;
+    const problem = result.error ? "missing" : result.timedOut ? "timeout" : result.code !== 0 ? "exit" : null;
+    if (!problem) continue;
+    if (result.error) blocks.push(result.error);
+    if (step.optional) {
+      blocks.push(`(optional step ended with ${problem === "exit" ? `exit code ${result.code}` : problem === "timeout" ? "a timeout" : "an error"}; it was not counted as a failure)`);
+      continue;
     }
-    if (result.timedOut) {
-      timedOut = true;
-      code = null;
-      break;
-    }
-    if (result.code !== 0) {
-      code = result.code;
-      break;
-    }
+    if (failed) continue;
+    failed = true;
+    if (problem === "missing") missing = true;
+    if (problem === "timeout") timedOut = true;
+    code = problem === "exit" ? result.code : null;
   }
   return { output: blocks.join("\n"), code, timedOut, missing };
+}
+
+export type TargetContext = { systemDrive: string; currentUser: string };
+
+/** Refuses a validated request that would damage the Windows drive or lock the signed-in user out. */
+export function checkTarget(plan: Plan, values: Record<string, string>, ctx: TargetContext): string | null {
+  const drive = values.drive?.toUpperCase();
+  if (drive && ctx.systemDrive && drive === ctx.systemDrive.toUpperCase()) {
+    if (plan.id === "system-backup") return "Choose a destination other than the Windows drive.";
+    if (plan.blockSystemDrive) return "This action is not run on the Windows drive. Choose another drive.";
+  }
+  if (plan.protectCurrentUser && values.user && ctx.currentUser && values.user.toLowerCase() === ctx.currentUser.toLowerCase()) {
+    return "REcleaner will not change the account you are signed in with. Sign in with a different administrator account to do this.";
+  }
+  return null;
+}
+
+/**
+ * Validates the caller's parameters against the plan's declared fields and builds the exact commands
+ * to run. Nothing outside the plan's own steps can be added, and only declared fields reach them.
+ */
+export function prepareSteps(plan: Plan, params: Record<string, string>, ctx: TargetContext): { ok: true; steps: Step[] } | { ok: false; message: string } {
+  const values: Record<string, string> = {};
+  for (const field of plan.fields ?? []) {
+    const checked = validateField(field, params[field] ?? "", Boolean(plan.optional?.includes(field)));
+    if (!checked.ok) return { ok: false, message: checked.message };
+    values[field] = checked.value;
+  }
+  const blocked = checkTarget(plan, values, ctx);
+  if (blocked) return { ok: false, message: blocked };
+
+  let steps = applyTokens(plan.steps ?? [], values);
+  if (plan.id === "chkdsk" && values.drive === ctx.systemDrive.toUpperCase()) {
+    // chkdsk cannot lock the Windows drive and asks whether to check it at the next restart.
+    steps = steps.map((step) => ({ ...step, input: "Y\r\n" }));
+  }
+  if (plan.id === "user-add" && !values.password) {
+    steps = [{ label: "Create user", file: "net.exe", args: ["user", values.user ?? "", "/add"] }];
+  }
+  if ((plan.id === "fw-block" || plan.id === "fw-unblock") && values.exePath) {
+    const base = values.exePath.split("\\").pop()?.replace(/[^A-Za-z0-9._-]/g, "") || "app";
+    steps = steps.map((step) => ({
+      ...step,
+      args: step.args.map((arg) => (arg.startsWith("name=") ? `name=REcleaner_${base}` : arg)),
+    }));
+  }
+  return { ok: true, steps };
+}
+
+export function classifyRestorePoint(output: string, code: number | null): { state: ServerResult["state"]; summary: string } {
+  if (code === 0 && /^RESTORE_POINT=created\s*$/m.test(output)) {
+    return { state: "success", summary: "A new restore point was created." };
+  }
+  if (/^RESTORE_POINT=not-created\s*$/m.test(output)) {
+    return {
+      state: "warning",
+      summary: "Windows did not create a new restore point, so nothing that depends on one was started. Windows normally allows one automatic restore point every 24 hours; an earlier one may still exist under System Protection.",
+    };
+  }
+  return { state: "error", summary: "The restore point could not be created. Nothing that depends on one was started." };
 }
 
 async function runDism(plan: Plan, started: number, isWindows: boolean): Promise<ServerResult> {
@@ -248,6 +352,28 @@ async function runProbe(plan: Plan, started: number, isWindows: boolean): Promis
 }
 
 
+const RESTORE_POINT_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+function Newest {
+  $point = @(Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Sort-Object SequenceNumber -Descending | Select-Object -First 1)
+  if ($point.Count -gt 0) { [int]$point[0].SequenceNumber } else { 0 }
+}
+try { Enable-ComputerRestore -Drive ($env:SystemDrive + '\\') } catch { "ENABLE_FAILED=$($_.Exception.Message)" }
+$before = Newest
+$warn = $null
+try {
+  Checkpoint-Computer -Description 'REcleaner' -RestorePointType 'MODIFY_SETTINGS' -WarningVariable warn -WarningAction SilentlyContinue
+} catch {
+  "CHECKPOINT_ERROR=$($_.Exception.Message)"
+  exit 1
+}
+$after = Newest
+if ($after -gt $before) { 'RESTORE_POINT=created'; "SEQUENCE=$after"; exit 0 }
+'RESTORE_POINT=not-created'
+if ($warn) { "REASON=$($warn -join ' ')" }
+exit 3
+`.trim();
+
 export const SERVICE_DIAGNOSTIC_SCRIPT = `
 $names = @('RpcSs','DcomLaunch','EventLog','Schedule','Winmgmt','CryptSvc','Dhcp','Dnscache','BITS','wuauserv','WinDefend','mpssvc','Spooler','WlanSvc','bthserv','AudioSrv')
 $warn = 0
@@ -307,6 +433,12 @@ async function dispatch(plan: Plan, params: Record<string, string>, started: num
       output: result.output,
       exitCode: result.code,
     });
+  }
+
+  if (plan.kind === "restore-point") {
+    const result = await runProcess("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", RESTORE_POINT_SCRIPT], plan.timeoutMs);
+    const verdict = result.error || result.timedOut ? { state: "error" as const, summary: result.timedOut ? "Creating the restore point timed out. Nothing that depends on one was started." : "The restore point could not be created. Nothing that depends on one was started." } : classifyRestorePoint(result.output, result.code);
+    return baseResult(plan, verdict.state, verdict.summary, { started, isWindows, output: result.output || result.error || "", exitCode: result.code });
   }
 
   if (plan.kind === "dism") return runDism(plan, started, isWindows);
@@ -465,29 +597,12 @@ exit $LASTEXITCODE
     return baseResult(plan, state, summary, { started, isWindows, output: result.output, exitCode: result.code });
   }
 
-  const values: Record<string, string> = {};
-  for (const field of plan.fields ?? []) {
-    const checked = validateField(field, params[field] ?? "", Boolean(plan.optional?.includes(field)));
-    if (!checked.ok) {
-      return baseResult(plan, "error", checked.message, { started, isWindows, exitCode: 1 });
-    }
-    values[field] = checked.value;
-  }
-  if ((plan.id === "system-backup" || plan.id === "driver-backup" || plan.id === "driver-restore" || plan.id === "winget-export" || plan.id === "winget-import") && values.drive === "C" && plan.id === "system-backup") {
-    return baseResult(plan, "error", "Choose a destination other than C:.", { started, isWindows, exitCode: 1 });
-  }
-
-  let steps = applyTokens(plan.steps ?? [], values);
-  if (plan.id === "user-add" && !values.password) {
-    steps = [{ label: "Create user", file: "net.exe", args: ["user", values.user ?? "", "/add"] }];
-  }
-  if ((plan.id === "fw-block" || plan.id === "fw-unblock") && values.exePath) {
-    const base = values.exePath.split("\\").pop()?.replace(/[^A-Za-z0-9._-]/g, "") || "app";
-    steps = steps.map((step) => ({
-      ...step,
-      args: step.args.map((arg) => (arg.startsWith("name=") ? `name=REcleaner_${base}` : arg)),
-    }));
-  }
+  const prepared = prepareSteps(plan, params, {
+    systemDrive: (process.env.SystemDrive || "C:").slice(0, 1),
+    currentUser: (await import("node:os")).userInfo().username,
+  });
+  if (!prepared.ok) return baseResult(plan, "error", prepared.message, { started, isWindows, exitCode: 1 });
+  const steps = prepared.steps;
   if (steps.length === 0) {
     return baseResult(plan, "error", "This action has no command.", { started, isWindows, exitCode: 1 });
   }
@@ -515,6 +630,21 @@ exit $LASTEXITCODE
     output: ran.output,
     exitCode: ran.code,
   });
+}
+
+export function rejectedRequest(message: string): ServerResult {
+  return {
+    actionId: "",
+    title: "Request rejected",
+    state: "error",
+    summary: `${message} Nothing was run.`,
+    exitCode: 1,
+    durationMs: 0,
+    output: "",
+    startedAt: new Date().toISOString(),
+    commands: [],
+    isWindows: false,
+  };
 }
 
 export async function executeAction(actionId: string, params: Record<string, string>): Promise<ServerResult> {

@@ -17,8 +17,10 @@
     "preview:stop": "node scripts/preview.mjs stop",
     "typecheck": "tsc --noEmit",
     "desktop:build": "node desktop/build.mjs",
+    "desktop:ui": "vite build --config vite.desktop.config.ts",
+    "test:ui": "npm run desktop:ui && node scripts/desktop-ui-smoke.mjs",
     "check:auth": "node scripts/check-auth-invariant.mjs",
-    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/recleaner/health.test.ts src/lib/recleaner/scan/scan.test.ts src/lib/recleaner/harden.test.ts src/lib/recleaner/trust.test.ts",
+    "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test src/lib/app-data/app-data.test.ts src/lib/app-data/readiness-schedule.test.ts src/lib/auth/gate-identity.test.ts src/lib/auth/sign-in-gate.test.ts src/lib/recleaner/health.test.ts src/lib/recleaner/scan/scan.test.ts src/lib/recleaner/harden.test.ts src/lib/recleaner/trust.test.ts src/lib/recleaner/runner.test.ts src/lib/recleaner/plans.test.ts src/lib/recleaner/request.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
