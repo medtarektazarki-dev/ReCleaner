@@ -88,6 +88,7 @@ jobs:
           retention-days: 30
 
       - name: Publish downloadable continuous build
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
