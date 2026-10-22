@@ -1,9 +1,10 @@
+//go:build windows
+
 package main
 
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -26,7 +27,7 @@ func message(title, text string, flags uintptr) int {
 }
 
 func psQuote(value string) string {
-  return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func main() {
@@ -34,29 +35,13 @@ func main() {
 	if err != nil {
 		return
 	}
-	localAppData := os.Getenv("LOCALAPPDATA")
-	if localAppData == "" {
-		message("REcleaner", "Uninstall stopped because the current user's Local AppData folder could not be identified. No files were deleted.", mbIconErr)
-		return
-	}
-	actualDir, err := filepath.Abs(filepath.Clean(filepath.Dir(self)))
-	if err != nil {
-		message("REcleaner", "Uninstall stopped because the application folder could not be resolved. No files were deleted.", mbIconErr)
-		return
-	}
-	expectedDir, err := filepath.Abs(filepath.Join(localAppData, "Programs", "REcleaner"))
-	if err != nil {
-		message("REcleaner", "Uninstall stopped because the expected installation folder could not be resolved. No files were deleted.", mbIconErr)
-		return
-	}
-	volumeRoot := filepath.Clean(filepath.VolumeName(actualDir) + string(os.PathSeparator))
-	if !strings.EqualFold(actualDir, expectedDir) || strings.EqualFold(actualDir, volumeRoot) {
-		message("REcleaner", "This is not the installed copy of REcleaner. For a portable copy, close REcleaner and delete the extracted folder manually. No folder was deleted.", mbIconInf)
-		return
-	}
-	dir := actualDir
-	if _, err := os.Stat(filepath.Join(dir, "REcleaner.exe")); err != nil {
-		message("REcleaner", "Uninstall stopped. REcleaner.exe is not in the installed application folder. No files were deleted.", mbIconErr)
+	dir, problem := installDirProblem(self, os.Getenv("LOCALAPPDATA"))
+	if problem != "" {
+		flags := uintptr(mbIconErr)
+		if problem == problemPortable {
+			flags = mbIconInf
+		}
+		message("REcleaner", problem, flags)
 		return
 	}
 	if message("REcleaner", "Remove REcleaner from this PC?\n\nYour Windows system files are not removed.", mbYesNo|mbIconInf) != idYes {
