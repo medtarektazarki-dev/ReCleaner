@@ -88,7 +88,7 @@ The current workflow does not Authenticode-sign the executable. Windows may show
 5. Keep a laptop connected to power during long repairs.
 6. Read the final status and activity details. A failed, unavailable, cancelled, or timed-out operation must not be treated as success.
 
-A restore point may be offered before a recommended repair, but it may be unavailable and does not replace a real backup. Windows repair commands can take time; do not power off the PC while DISM or System File Checker is working.
+A restore point may be offered before a recommended repair, but it may be unavailable and does not replace a real backup. Windows normally allows one automatic restore point per 24 hours; if Windows declines to create a new one, REcleaner says so and does not start the repair that depends on it. You can then choose to continue without one. If you close REcleaner while a task is running, a Windows tool that already started (DISM, SFC, CHKDSK) can keep running in the background and nothing will report its result. Windows repair commands can take time; do not power off the PC while DISM or System File Checker is working.
 
 ## 6. Understand the main areas
 

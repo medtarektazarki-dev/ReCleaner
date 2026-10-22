@@ -23,8 +23,19 @@ The source currently includes these safeguards:
 - UI requests are action IDs mapped to allowlisted plans in src/lib/recleaner/plans.ts; process execution in src/lib/recleaner/runner.server.ts uses argument arrays with **shell: false**.
 - Actions marked as administrator-required check the current Windows principal token before execution; failures are returned as `requires_admin` instead of starting the action.
 - Full system scan is documented as diagnostic/read-only; repairs are separate actions.
+- Requests from the interface are validated before they reach an action: an action id of lowercase letters, digits and dashes, at most eight short string parameters, and then the action's own per-field rules (src/lib/recleaner/request.ts and plans.ts). A parameter can fill a field the plan declares; it can never choose a program or add arguments.
+- Windows tools are started from `%SystemRoot%\System32` by absolute path when they exist there, and standard input is closed so a tool cannot stop and wait for a keystroke.
+- Some actions refuse targets that would harm the machine: rewriting file attributes across the Windows drive, writing a system image to it, or deleting, disabling or demoting the account you are signed in with.
+- Passwords handed to `net user` cannot begin with `/` or `*`, which `net` would read as a switch or a prompt.
+- Product keys and password lines are redacted from returned output and logs; the interface does not store passwords.
 
 These controls reduce risk; they are **not** a claim that the application is vulnerability-free or has undergone an independent security audit. A valid action can still make consequential system changes.
+
+### Known limitations
+
+- **The installer is per-user.** REcleaner is installed under `%LOCALAPPDATA%\Programs\REcleaner`, a folder the signed-in user can write to. When REcleaner is started as administrator, Windows elevates a program that anything running as that same user could already have replaced. Elevation does not protect against malware that is already running as you. If that matters to you, run the portable ZIP from a folder only administrators can write to.
+- **No Windows test environment ran this release.** The PowerShell and Windows command behaviour is covered by unit tests of the logic around it and by a scripted interface test, not by executing the commands on Windows. See `docs/windows-11-validation.md`.
+- **Closing the window does not stop a Windows tool that already started.** DISM, SFC and CHKDSK keep running in the background, and nothing reports their result.
 
 ## Safe use
 
