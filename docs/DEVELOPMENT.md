@@ -36,6 +36,11 @@ npm run build
 
 Review the output and confirm the command completed successfully. Tests and a Linux build do not replace a smoke test on a real supported Windows machine.
 
+Two further checks are not part of `npm test`:
+
+- `npm run test:ui` builds the desktop interface and drives it in Chromium against a scripted bridge (no Windows command runs). It needs a Chromium: set `RECLEANER_CHROMIUM` to an existing binary, or run `npx playwright install chromium`. It is not part of `npm test` because CI does not install a browser.
+- The installer logic has Go tests: `cd desktop/installer/setup && go test ./...` and the same in `uninstall`. The Windows-only files carry a `windows` build tag so these run on Linux.
+
 ## Build the Windows desktop package
 
 The current packaging script uses Linux paths and commands (including **/tmp**, **mv**, **unzip**, and **python3**) and explicitly expects a non-Windows build host. **Do not run npm run desktop:build in native Windows Command Prompt or PowerShell.** The repository's GitHub Actions workflow on Ubuntu is the recommended build path.

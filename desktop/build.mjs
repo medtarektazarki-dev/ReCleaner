@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile, copyFile, cp, stat } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
@@ -10,6 +10,11 @@ import pngToIco from "png-to-ico";
 import { Data, NtExecutable, NtExecutableResource, Resource } from "resedit";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const appVersion = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+const [major, minor, patch] = appVersion.split(".").map((part) => Number.parseInt(part, 10));
+if (![major, minor, patch].every(Number.isInteger) || !/^\d+\.\d+\.\d+$/.test(appVersion)) {
+  throw new Error(`package.json version must be MAJOR.MINOR.PATCH, got ${appVersion}`);
+}
 const stage = "/tmp/recleaner-stage";
 const electronZip = "/tmp/electron-win.zip";
 const electronFileName = "electron-v44.7.0-win32-x64.zip";
@@ -65,15 +70,15 @@ function stamp(exePath, icoPath, original) {
     InternalName: "REcleaner",
     CompanyName: "REcleaner",
     LegalCopyright: "REcleaner",
-    FileVersion: "1.0.0",
-    ProductVersion: "1.0.0",
+    FileVersion: appVersion,
+    ProductVersion: appVersion,
   };
   if (versions[0]) {
     versions[0].setStringValues({ lang: 1033, codepage: 1200 }, strings);
-    versions[0].fixedInfo.fileVersionMS = 1 << 16;
-    versions[0].fixedInfo.fileVersionLS = 0;
-    versions[0].fixedInfo.productVersionMS = 1 << 16;
-    versions[0].fixedInfo.productVersionLS = 0;
+    versions[0].fixedInfo.fileVersionMS = (major << 16) | minor;
+    versions[0].fixedInfo.fileVersionLS = patch << 16;
+    versions[0].fixedInfo.productVersionMS = (major << 16) | minor;
+    versions[0].fixedInfo.productVersionLS = patch << 16;
     versions[0].outputToResourceEntries(res.entries);
   }
   res.outputResource(exe);
@@ -122,6 +127,8 @@ async function main() {
   if (jsText.includes("WindowsRepairToolPro") || jsText.includes("runner.server")) {
     throw new Error("desktop bundle leaked the legacy script or server runner");
   }
+  const notices = await readFile(path.join(root, "desktop/build/ui/THIRD_PARTY_LICENSES.txt"), "utf8");
+  if (!notices.includes("\nreact@") || !notices.includes("MIT License")) throw new Error("third-party licence notices are missing from the interface build");
   const cssText = await readFile(path.join(assets, css), "utf8");
   if (!cssText.includes("#061b35") && !cssText.includes("6,27,53")) throw new Error("desktop css missing the navy surface");
 
@@ -154,7 +161,7 @@ async function main() {
   await mkdir(appDir, { recursive: true });
   await writeFile(
     path.join(appDir, "package.json"),
-    JSON.stringify({ name: "recleaner", productName: "REcleaner", version: "1.0.0", private: true, main: "main.cjs" }, null, 2),
+    JSON.stringify({ name: "recleaner", productName: "REcleaner", version: appVersion, private: true, main: "main.cjs" }, null, 2),
   );
   await copyFile(path.join(root, "desktop/main.cjs"), path.join(appDir, "main.cjs"));
   await copyFile(path.join(root, "desktop/preload.cjs"), path.join(appDir, "preload.cjs"));
@@ -162,6 +169,12 @@ async function main() {
   await copyFile(path.join(root, "desktop/build/icon.png"), path.join(appDir, "icon.png"));
   await copyFile(path.join(root, "desktop/build/tray.png"), path.join(appDir, "tray.png"));
   await cp(path.join(root, "desktop/build/ui"), path.join(appDir, "ui"), { recursive: true });
+  // The portable ZIP and the installer should carry the security policy and the third-party notices with them.
+  await copyFile(path.join(root, "SECURITY.md"), path.join(stage, "SECURITY.md"));
+  await copyFile(path.join(root, "THIRD_PARTY.md"), path.join(stage, "THIRD_PARTY.md"));
+  // Setup.exe and Uninstall.exe statically include the Go standard library (BSD-3-Clause), whose notice must travel with them.
+  const goRoot = execFileSync(go, ["env", "GOROOT"], { cwd: path.join(root, "desktop/installer/setup"), encoding: "utf8" }).trim();
+  await copyFile(path.join(goRoot, "LICENSE"), path.join(stage, "LICENSE-go.txt"));
   await run(go, ["build", "-ldflags", "-s -w -H windowsgui", "-o", path.join(stage, "Uninstall.exe"), "."], {
     cwd: path.join(root, "desktop/installer/uninstall"),
     env: { ...process.env, GOOS: "windows", GOARCH: "amd64", CGO_ENABLED: "0" },
@@ -179,7 +192,7 @@ async function main() {
   if (count < 7) throw new Error(`icon group has ${count} images`);
   const version = Resource.VersionInfo.fromEntries(stamped.entries)[0];
   const values = version?.getStringValues({ lang: 1033, codepage: 1200 }) ?? {};
-  if (values.ProductName !== "REcleaner" || values.OriginalFilename !== "REcleaner.exe") {
+  if (values.ProductName !== "REcleaner" || values.OriginalFilename !== "REcleaner.exe" || values.ProductVersion !== appVersion) {
     throw new Error(`version resource mismatch ${JSON.stringify(values)}`);
   }
   const head = (await readFile(exePath)).subarray(0, 2).toString("latin1");
@@ -203,7 +216,7 @@ print("zipped", os.path.getsize(dest))
 
   console.log("setup");
   const stub = "/tmp/recleaner-setup-stub.exe";
-  await run(go, ["build", "-ldflags", "-s -w -H windowsgui", "-o", stub, "."], {
+  await run(go, ["build", "-ldflags", `-s -w -H windowsgui -X main.version=${appVersion}`, "-o", stub, "."], {
     cwd: path.join(root, "desktop/installer/setup"),
     env: { ...process.env, GOOS: "windows", GOARCH: "amd64", CGO_ENABLED: "0" },
   });

@@ -4,7 +4,7 @@ Windows Repair & Optimization Utility
 
 Repair. Clean. Optimize.
 
-REcleaner v1.0.0 is a Windows maintenance application. It checks the PC, repairs only when a check asks for it, and records what actually happened.
+REcleaner is a Windows maintenance application. It checks the PC, repairs only when a check asks for it, and records what actually happened.
 
 ## Start here
 
@@ -125,18 +125,18 @@ npm run desktop:build
 2. Bundles the execution layer.
 3. Builds the desktop interface with Vite (`vite.desktop.config.ts`).
 4. Downloads the Electron 44 Windows x64 runtime if it is not already at `/tmp/electron-win.zip`.
-5. Assembles `REcleaner.exe`, stamps the icon and version `1.0.0`, and builds `Uninstall.exe`.
+5. Assembles `REcleaner.exe`, stamps the icon and the version from `package.json`, and builds `Uninstall.exe`. The portable ZIP and the installer also carry `SECURITY.md` and `THIRD_PARTY.md`.
 6. Writes:
 
 - `artifacts/REcleaner-win64.zip` — portable folder; start `REcleaner.exe` from inside the folder
-- `artifacts/REcleaner Setup.exe` — installer for the current user
+- `artifacts/REcleaner.Setup.exe` — installer for the current user
 - `artifacts/REcleaner.ico`
 
 The unpacked program is also at `/tmp/recleaner-stage/REcleaner.exe`. Do not move that executable by itself. It needs the files beside it.
 
 ### Installer
 
-`REcleaner Setup.exe` asks before it copies files to `%LOCALAPPDATA%\Programs\REcleaner`, then creates Desktop and Start menu shortcuts. Uninstall is `Uninstall.exe` in that folder. It removes those shortcuts and the install folder. It does not remove Windows system files.
+`REcleaner.Setup.exe` asks before it copies files to `%LOCALAPPDATA%\Programs\REcleaner`, then creates Desktop and Start menu shortcuts. Uninstall is `Uninstall.exe` in that folder. It removes those shortcuts and the install folder. It does not remove Windows system files.
 
 The setup program is the Go source in `desktop/installer/setup`. The uninstaller is `desktop/installer/uninstall`. `npm run desktop:build` compiles both for `windows/amd64`.
 
@@ -146,7 +146,7 @@ REcleaner does not require elevation to open. Read-only checks that do not need 
 
 ## Version
 
-Product version: **1.0.0**. The window shows `REcleaner v1.0.0` on the startup screen and in Settings. The Windows executable version resource uses the same number.
+The product version is the `version` field in `package.json`. It is the only place to change it: the window (header and Settings), the Windows executable version resource, and the installer's Apps & features entry all take it from there at build time.
 
 ## Brand
 

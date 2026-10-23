@@ -40,13 +40,23 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.22.x"
+          go-version: "1.25.x"
+          cache: false
 
       - name: Install system tools
         run: sudo apt-get update && sudo apt-get install -y curl unzip
 
       - name: Install project dependencies
         run: npm ci
+
+      - name: Typecheck and test before building
+        shell: bash
+        run: |
+          npm run typecheck
+          npm test
+          for dir in desktop/installer/setup desktop/installer/uninstall; do
+            (cd "$dir" && go test ./...)
+          done
 
       - name: Install pinned desktop build dependencies
         run: npm install --no-save --package-lock=false esbuild@0.28.2 @resvg/resvg-js@2.6.2 png-to-ico@3.0.2 resedit@3.1.0
@@ -78,6 +88,7 @@ jobs:
           retention-days: 30
 
       - name: Publish downloadable continuous build
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

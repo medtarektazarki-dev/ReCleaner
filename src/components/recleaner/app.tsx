@@ -152,9 +152,27 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
     return refreshServer();
   }
 
+  // A failure of the bridge itself (not of the Windows command) must still end as a visible result, otherwise
+  // the tool would stay on "Running…" and the busy state would never be released by the caller's error path.
   async function act(input: { data: { actionId: string; params: Record<string, string> } }): Promise<ServerResult> {
-    if (isDesktop()) return window.recleaner!.run(input.data.actionId, input.data.params);
-    return actServer(input);
+    try {
+      if (isDesktop()) return await window.recleaner!.run(input.data.actionId, input.data.params);
+      return await actServer(input);
+    } catch {
+      const plan = getPlan(input.data.actionId);
+      return {
+        actionId: input.data.actionId,
+        title: plan?.title ?? input.data.actionId,
+        state: "error",
+        summary: "REcleaner could not reach its Windows helper, so it cannot say whether this ran. Check the Windows state before trying again.",
+        exitCode: null,
+        durationMs: 0,
+        output: "",
+        startedAt: new Date().toISOString(),
+        commands: plan ? commandPreview(plan) : [],
+        isWindows: profile.isWindows,
+      };
+    }
   }
 
   function notify(title: string, body: string) {
@@ -493,7 +511,7 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         <Mark className="size-5" />
         <Wordmark className="text-sm" />
         <span className="hidden text-sm text-subtle sm:inline">Repair. Clean. Optimize.</span>
-        <span className="hidden text-xs text-subtle lg:inline">v1.0.0</span>
+        <span className="hidden text-xs text-subtle lg:inline">v{__APP_VERSION__}</span>
         <label className="app-no-drag ml-auto hidden min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-elevated px-3 md:flex md:max-w-xs">
           <Search className="size-4 text-subtle" aria-hidden="true" />
           <input
@@ -748,7 +766,15 @@ export function RecleanerApp({ initial }: { initial: HostProfile }) {
         />
       ) : null}
       {flow?.kind === "close" ? (
-        <SimpleDialog title="Close REcleaner?" body="The window will close. Nothing is left running." onCancel={() => setFlow(null)}>
+        <SimpleDialog
+          title="Close REcleaner?"
+          body={
+            busy
+              ? "A task is still running. Closing stops REcleaner's remaining steps, but a Windows tool that already started (such as DISM, SFC, or CHKDSK) can keep running in the background until it finishes. Nothing will check or report its result."
+              : "The window will close. Nothing is left running."
+          }
+          onCancel={() => setFlow(null)}
+        >
           <DialogButton
             onClick={() => {
               setFlow(null);
@@ -973,7 +999,7 @@ function SettingsView({ profile, onRelaunch }: { profile: HostProfile; onRelaunc
   return (
     <div className="mx-auto w-full max-w-3xl px-5 py-8">
       <h1 className="text-2xl font-medium">Settings</h1>
-      <p className="mt-2 text-sm text-muted">REcleaner v1.0.0 · Windows repair and optimization</p>
+      <p className="mt-2 text-sm text-muted">REcleaner v{__APP_VERSION__} · Windows repair and optimization</p>
       <Group title="General">
         <Toggle label="Create a restore point before repair" hint="Offered on Windows before actions marked as repairs." checked={settings.restoreBeforeRepair} onChange={(restoreBeforeRepair) => setSettings({ restoreBeforeRepair })} />
       </Group>

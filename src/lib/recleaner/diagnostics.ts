@@ -65,7 +65,11 @@ try {
   "RTP=$($s.RealTimeProtectionEnabled)"
   "AV=$($s.AntivirusEnabled)"
   "SIG=$($s.AntivirusSignatureLastUpdated)"
-  if ($s.RealTimeProtectionEnabled -and $s.AntivirusEnabled) {
+  "MODE=$($s.AMRunningMode)"
+  if ($s.AMRunningMode -match 'Passive') {
+    "GRADE=unknown"
+    "SUMMARY=Microsoft Defender is in passive mode, which usually means another antivirus is the primary product. REcleaner did not check that product. Settings were not changed."
+  } elseif ($s.RealTimeProtectionEnabled -and $s.AntivirusEnabled) {
     "GRADE=healthy"
     "SUMMARY=Microsoft Defender real-time protection is on. Settings were not changed."
   } else {
@@ -253,17 +257,19 @@ if ($crit -gt 0 -or $whea -gt 0 -or $diskErr -gt 0 -or $ntfs -gt 0) {
 `.trim(),
 
   "bsod-diagnose": `
+$since = (Get-Date).AddDays(-30)
 $dumps = @()
-if (Test-Path 'C:\\Windows\\Minidump') {
-  $dumps = @(Get-ChildItem 'C:\\Windows\\Minidump' -Filter '*.dmp' -ErrorAction SilentlyContinue)
+$dumpDir = Join-Path $env:SystemRoot 'Minidump'
+if (Test-Path -LiteralPath $dumpDir) {
+  $dumps = @(Get-ChildItem -LiteralPath $dumpDir -Filter '*.dmp' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $since })
 }
 "DUMPS=$($dumps.Count)"
 if ($dumps.Count -gt 0) {
   $last = $dumps | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   "LAST_DUMP=$($last.LastWriteTime.ToString('o'))"
 }
-"MEMORY_DMP=$(Test-Path 'C:\\Windows\\MEMORY.DMP')"
-$event = Get-WinEvent -FilterHashtable @{ LogName='System'; Id=1001; StartTime=(Get-Date).AddDays(-30) } -MaxEvents 1 -ErrorAction SilentlyContinue | Select-Object -First 1
+"MEMORY_DMP=$(Test-Path -LiteralPath (Join-Path $env:SystemRoot 'MEMORY.DMP'))"
+$event = Get-WinEvent -FilterHashtable @{ LogName='System'; Id=1001; StartTime=$since } -MaxEvents 1 -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($event) {
   "BUGCHECK_TIME=$($event.TimeCreated.ToString('o'))"
   $text = [string]$event.Message
@@ -282,19 +288,23 @@ if ($dumps.Count -gt 0 -or $event) {
 try {
   $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
   "CAPTION=$($os.Caption)"
-  $proc = Start-Process -FilePath winmgmt.exe -ArgumentList '/verifyrepository' -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-"VERIFY_EXIT=$($proc.ExitCode)"
-if ($proc -and $proc.ExitCode -eq 0) {
-  "GRADE=healthy"
-  "SUMMARY=CIM responded and WMI repository verification returned exit code 0. It was not rebuilt."
-} else {
-  "GRADE=attention"
-  "SUMMARY=WMI verification did not return exit code 0. The repository was not rebuilt."
-}
 } catch {
   "GRADE=warning"
   "SUMMARY=A CIM query failed. The WMI repository was not rebuilt."
   "DETAIL=$($_.Exception.Message)"
+  exit 0
+}
+$verify = ((& winmgmt.exe /verifyrepository 2>&1) | Out-String).Trim()
+"VERIFY=$($verify -replace '\\s+', ' ')"
+if ($verify -match '(?i)inconsistent') {
+  "GRADE=warning"
+  "SUMMARY=WMI repository verification reported the repository as inconsistent. It was not rebuilt."
+} elseif ($verify -match '(?i)\\bconsistent\\b') {
+  "GRADE=healthy"
+  "SUMMARY=CIM responded and WMI repository verification reported it as consistent. It was not rebuilt."
+} else {
+  "GRADE=unknown"
+  "SUMMARY=CIM responded, but WMI repository verification gave no recognizable result. It was not rebuilt."
 }
 `.trim(),
 
