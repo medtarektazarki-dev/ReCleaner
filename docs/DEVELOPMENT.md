@@ -77,6 +77,7 @@ Workflow: [Build REcleaner for Windows](../.github/workflows/build-windows.yml).
 - Triggered by relevant source changes on **main**, or manually with **Run workflow**.
 - The quality-check workflow has read-only repository permissions. The Windows build workflow uses **contents: write** only to publish versioned prerelease assets to GitHub Releases; checkout disables persisted credentials.
 - Pins the GitHub Actions used by the workflow to full commit SHAs and uses explicit versions for packaging dependencies.
+- Build tools (esbuild, resvg, png-to-ico, resedit) are exact-pinned devDependencies installed by `npm ci`; no separate install step.
 - Verifies the downloaded Electron runtime against the official release SHA-256 list, verifies the expected output files and portable ZIP contents, computes SHA-256 checksums with the exact published filenames, and validates the checksums before upload.
 - Publishes **REcleaner.Setup.exe**, **REcleaner-win64.zip**, **REcleaner.ico**, and **SHA256SUMS.txt** as a prerelease on GitHub Releases.
 - Also uploads **REcleaner-Windows-x64** as a temporary Actions artifact with 30-day retention.
